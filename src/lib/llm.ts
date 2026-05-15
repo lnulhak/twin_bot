@@ -99,6 +99,41 @@ export async function generateNudge(prompt: string): Promise<string> {
   return completion.choices[0].message.content ?? "";
 }
 
+const OnboardingParseSchema = z.object({
+  goal: z.string(),
+  whyItMatters: z.string(),
+  timelineDays: z.union([z.literal(30), z.literal(60), z.literal(90)]),
+  dailyHours: z.number().min(1).max(8),
+  wakeTime: z.string(),
+  sleepTime: z.string(),
+  blockedTimes: z.array(z.object({ label: z.string(), startTime: z.string(), endTime: z.string() })),
+  currentLevel: z.string(),
+  twinName: z.string(),
+  twinVibe: z.string(),
+});
+
+export async function parseOnboardingReply(userReply: string, timezone: string) {
+  const completion = await openai.chat.completions.parse({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content: `Extract onboarding information from the user's reply.
+- timelineDays must be 30, 60, or 90 — pick the closest if ambiguous
+- wakeTime and sleepTime must be "HH:mm" 24h format
+- dailyHours must be a number 1-8
+- blockedTimes: array of {label, startTime "HH:mm", endTime "HH:mm"} — empty array if none
+- twinName: if not specified, pick one of Mira, Kai, Zoe
+- twinVibe: if not specified, infer something reasonable from context
+- timezone: ${timezone}`,
+      },
+      { role: "user", content: userReply },
+    ],
+    response_format: zodResponseFormat(OnboardingParseSchema, "onboarding"),
+  });
+  return completion.choices[0].message.parsed;
+}
+
 export async function generateReply(prompt: string): Promise<string> {
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
