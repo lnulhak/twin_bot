@@ -333,6 +333,20 @@ async function handleMessage(text: string) {
     return;
   }
 
+  if (text === "/tomorrow") {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+    if (!user) { await send("send /start first"); return; }
+    if (!planHasStarted(user.planStartDate)) { await send("your plan starts tomorrow — that's day 1"); return; }
+    const dayNumber = getDayNumber(user.planStartDate);
+    const tomorrowDay = dayNumber + 1;
+    if (tomorrowDay > user.timelineDays) { await send("tomorrow is after your plan ends. use /reset to start a new goal."); return; }
+    const blocks = user.blocks.filter((b) => b.dayNumber === tomorrowDay).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    if (!blocks.length) { await send(`no blocks on day ${tomorrowDay}`); return; }
+    const lines = blocks.map((b, i) => `${i + 1}. ${b.startTime} — ${b.description} (${b.durationMin}m)`);
+    await send(`day ${tomorrowDay} of ${user.timelineDays}\n\n${lines.join("\n")}`);
+    return;
+  }
+
   if (text === "/plan") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start first"); return; }
@@ -348,7 +362,7 @@ async function handleMessage(text: string) {
   }
 
   if (text === "/help") {
-    await send("/today — today's blocks\n/done <n> — mark block complete\n/streak — current streak\n/twin — what your twin is doing now\n/plan — this week's overview\n/reset — start over");
+    await send("/today — today's blocks\n/tomorrow — tomorrow's blocks\n/done <n> — mark block complete\n/streak — current streak\n/twin — what your twin is doing now\n/plan — this week's overview\n/reset — start over");
     return;
   }
 
