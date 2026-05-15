@@ -51,7 +51,7 @@ USER INPUT:
 - The user's plan (JSON): {{userPlan}}
 
 RULES:
-- Generate a personality (2-3 sentences) and a speechStyle (concrete: lowercase? short sentences? specific phrases? emojis or not?).
+- Generate a personality (2-3 sentences) and a speechStyle (concrete: lowercase? short sentences? specific phrases? emojis or not?). Use gender-neutral language — no "he", "she", "his", "her". Use "they/them" or avoid pronouns entirely.
 - Generate a twinBlocks array that mirrors ONLY the user's blocks provided (first 7 days). Keep vibe phrases under 6 words.
 - Generate a twinBlocks array that mirrors the user's blocks BUT:
   - Each twin block starts 10-15 minutes EARLIER than the user's

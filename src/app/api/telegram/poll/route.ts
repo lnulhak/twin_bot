@@ -94,7 +94,7 @@ async function runGeneration(session: OnboardingSession) {
     const firstBlock = blocks.filter((b) => b.dayNumber === 1).sort((a, b) => a.startTime.localeCompare(b.startTime))[0];
     const firstTime = firstBlock?.startTime ?? input.wakeTime;
     await send(
-      `meet ${input.twinName}.\n\n${twinData.personality}\n\nshe texts like: "${twinData.speechStyle}"\n\nday 1 starts tomorrow at ${firstTime}. she'll nudge you before each block.\n\ntext her anytime — she'll reply in character. /help for commands.`
+      `meet ${input.twinName}.\n\n${twinData.personality}\n\ntexting style: "${twinData.speechStyle}"\n\nday 1 starts tomorrow at ${firstTime}. ${input.twinName} will nudge you before each block.\n\ntext ${input.twinName} anytime — they'll reply in character. /help for commands.`
     );
 
     clearSession();
