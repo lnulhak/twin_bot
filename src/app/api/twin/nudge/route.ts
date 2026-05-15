@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { generateNudge } from "@/lib/llm";
 import { fillTemplate, NUDGE_PROMPT } from "@/lib/prompts";
+import { sendMessage } from "@/lib/telegram";
 
 const NudgeSchema = z.object({ blockId: z.number() });
 
@@ -62,13 +63,11 @@ export async function POST(req: NextRequest) {
     const message = await generateNudge(prompt);
 
     await db.message.create({
-      data: {
-        userId: 1,
-        direction: "twin_to_user",
-        body: message,
-        blockRef: blockId,
-      },
+      data: { userId: 1, direction: "twin_to_user", body: message, blockRef: blockId },
     });
+
+    // Send directly to Telegram
+    await sendMessage(message);
 
     return NextResponse.json({ message });
   } catch (err) {
