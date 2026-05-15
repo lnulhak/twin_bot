@@ -15,7 +15,11 @@ function getDayNumber(planStartDate: string): number {
   const start = new Date(planStartDate + "T00:00:00+08:00");
   const today = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Singapore" }));
   today.setHours(0, 0, 0, 0);
-  return Math.max(1, Math.floor((today.getTime() - start.getTime()) / 86400000) + 1);
+  return Math.floor((today.getTime() - start.getTime()) / 86400000) + 1;
+}
+
+function planHasStarted(planStartDate: string): boolean {
+  return getDayNumber(planStartDate) >= 1;
 }
 
 function nowInSGT() {
@@ -195,6 +199,7 @@ async function handleMessage(text: string) {
   if (text === "/today") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start to get set up first"); return; }
+    if (!planHasStarted(user.planStartDate)) { await send(`plan starts tomorrow — rest up`); return; }
     const dayNumber = getDayNumber(user.planStartDate);
     const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
     if (!blocks.length) { await send("no blocks today"); return; }
@@ -206,6 +211,7 @@ async function handleMessage(text: string) {
   if (text.startsWith("/done")) {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start first"); return; }
+    if (!planHasStarted(user.planStartDate)) { await send(`plan starts tomorrow`); return; }
     const dayNumber = getDayNumber(user.planStartDate);
     const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
     const n = parseInt(text.split(" ")[1]);
@@ -236,6 +242,7 @@ async function handleMessage(text: string) {
   if (text === "/streak") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start first"); return; }
+    if (!planHasStarted(user.planStartDate)) { await send(`no streak yet — plan starts tomorrow`); return; }
     const dayNumber = getDayNumber(user.planStartDate);
     let streak = 0;
     for (let d = dayNumber; d >= 1; d--) {
@@ -249,6 +256,7 @@ async function handleMessage(text: string) {
   if (text === "/twin") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: { include: { blocks: true } } } });
     if (!user?.twin) { await send("send /start first"); return; }
+    if (!planHasStarted(user.planStartDate)) { await send(`${user.twin.name} starts tomorrow — get some rest`); return; }
     const dayNumber = getDayNumber(user.planStartDate);
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber);
