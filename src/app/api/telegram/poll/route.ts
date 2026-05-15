@@ -3,28 +3,21 @@ import { db } from "@/lib/db";
 import { generatePlan, generateTwin, generateReply, parseOnboardingReply } from "@/lib/llm";
 import { fillTemplate, REPLY_PROMPT } from "@/lib/prompts";
 import { scheduleNudge } from "@/lib/openclaw";
+import { sendMessage } from "@/lib/telegram";
 import { format, startOfDay } from "date-fns";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 
-const execAsync = promisify(exec);
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? "805422072";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const TIMEZONE = "Asia/Singapore";
 
-// Simple flag file to track if we're waiting for the onboarding reply
 const WAITING_FLAG = path.resolve(process.cwd(), ".onboarding-waiting");
 const GENERATING_FLAG = path.resolve(process.cwd(), ".onboarding-generating");
 
 let lastOffset = 0;
 
-async function send(text: string) {
-  await execAsync(
-    `openclaw message send --channel telegram --target ${CHAT_ID} -m ${JSON.stringify(text)}`
-  );
-}
+const send = (text: string) => sendMessage(text, CHAT_ID);
 
 const ONBOARDING_PROMPT = `hey. answer these and i'll build your plan:
 
@@ -46,11 +39,9 @@ async function runGeneration(userReply: string) {
     await send("parsing your answers and generating the plan...");
 
     const parsed = await parseOnboardingReply(userReply, TIMEZONE);
-    if (!parsed) throw new Error("Failed to parse onboarding reply");
-
+    if (!parsed) throw new Error("Failed to parse");
     const input = { ...parsed, timezone: TIMEZONE };
 
-    // Clear old data
     await db.block.deleteMany({});
     await db.message.deleteMany({});
     const twin = await db.twin.findUnique({ where: { userId: 1 } });
@@ -59,7 +50,6 @@ async function runGeneration(userReply: string) {
       await db.twin.delete({ where: { userId: 1 } });
     }
     await db.user.deleteMany({});
-
     await db.user.create({
       data: {
         id: 1,
@@ -79,21 +69,13 @@ async function runGeneration(userReply: string) {
     const twinData = await generateTwin(input, blocks);
 
     await db.block.createMany({ data: blocks.map((b) => ({ userId: 1, ...b })) });
-
     const createdTwin = await db.twin.create({
-      data: {
-        userId: 1,
-        name: input.twinName,
-        personality: twinData.personality,
-        speechStyle: twinData.speechStyle,
-      },
+      data: { userId: 1, name: input.twinName, personality: twinData.personality, speechStyle: twinData.speechStyle },
     });
-
     await db.twinBlock.createMany({
       data: twinData.twinBlocks.map((tb) => ({ twinId: createdTwin.id, ...tb })),
     });
 
-    // Schedule today's future blocks
     const now = new Date();
     for (const block of blocks.filter((b) => b.dayNumber === 1)) {
       const [h, m] = block.startTime.split(":").map(Number);
@@ -107,9 +89,7 @@ async function runGeneration(userReply: string) {
       }
     }
 
-    await send(
-      `done. ${input.twinName} is ready.\n\nshe'll text you at your first scheduled block. text her anytime — she'll reply in character.\n\n/reset to start over.`
-    );
+    await send(`done. ${input.twinName} is ready.\n\nshe'll nudge you at your first block. text her anytime.\n\n/help for commands.`);
   } catch (err) {
     console.error("Generation error:", err);
     await send("something went wrong. try /start again");
@@ -117,6 +97,148 @@ async function runGeneration(userReply: string) {
     if (fs.existsSync(WAITING_FLAG)) fs.unlinkSync(WAITING_FLAG);
     if (fs.existsSync(GENERATING_FLAG)) fs.unlinkSync(GENERATING_FLAG);
   }
+}
+
+async function handleMessage(text: string) {
+  if (text === "/start") {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: true } });
+    if (user?.twin) {
+      await send(`you're already set up — ${user.twin.name} is your twin. just text normally.\n\n/reset to start over.`);
+    } else {
+      fs.writeFileSync(WAITING_FLAG, "1");
+      await send(ONBOARDING_PROMPT);
+    }
+    return;
+  }
+
+  if (text === "/reset") {
+    if (fs.existsSync(WAITING_FLAG)) fs.unlinkSync(WAITING_FLAG);
+    if (fs.existsSync(GENERATING_FLAG)) fs.unlinkSync(GENERATING_FLAG);
+    fs.writeFileSync(WAITING_FLAG, "1");
+    await send(ONBOARDING_PROMPT);
+    return;
+  }
+
+  if (text === "/today") {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+    if (!user) { await send("send /start to get set up first"); return; }
+    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    if (!blocks.length) { await send("no blocks today"); return; }
+    const lines = blocks.map((b, i) => `${i + 1}. [${b.completed ? "x" : " "}] ${b.startTime} — ${b.description} (${b.durationMin}m)`);
+    await send(`day ${dayNumber} of ${user.timelineDays}\n\n${lines.join("\n")}\n\n/done <n> to mark complete`);
+    return;
+  }
+
+  if (text.startsWith("/done")) {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+    if (!user) { await send("send /start first"); return; }
+    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const n = parseInt(text.split(" ")[1]);
+    const block = blocks[n - 1];
+    if (!block) { await send("invalid number. use /today to see the list"); return; }
+    await db.block.update({ where: { id: block.id }, data: { completed: true } });
+    let streak = 0;
+    for (let d = dayNumber; d >= 1; d--) {
+      const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
+      if (dayBlocks.some((b) => b.completed || b.id === block.id)) streak++;
+      else break;
+    }
+    await send(`done: ${block.description}\n\n🔥 ${streak} day streak`);
+    return;
+  }
+
+  if (text === "/streak") {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+    if (!user) { await send("send /start first"); return; }
+    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    let streak = 0;
+    for (let d = dayNumber; d >= 1; d--) {
+      if (user.blocks.filter((b) => b.dayNumber === d).some((b) => b.completed)) streak++;
+      else break;
+    }
+    await send(`${streak} day streak — day ${dayNumber} of ${user.timelineDays}`);
+    return;
+  }
+
+  if (text === "/twin") {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: { include: { blocks: true } } } });
+    if (!user?.twin) { await send("send /start first"); return; }
+    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber);
+    const current = twinBlocks.find((b) => {
+      const [h, m] = b.startTime.split(":").map(Number);
+      const start = h * 60 + m;
+      return nowMin >= start && nowMin < start + b.durationMin;
+    });
+    if (current) {
+      await send(`${user.twin.name} is on: ${current.description}\n\n"${current.vibe}"`);
+    } else {
+      const next = twinBlocks.find((b) => { const [h, m] = b.startTime.split(":").map(Number); return h * 60 + m > nowMin; });
+      await send(next ? `${user.twin.name}'s next: ${next.startTime} — ${next.description}` : `${user.twin.name} is done for today`);
+    }
+    return;
+  }
+
+  if (text === "/plan") {
+    const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+    if (!user) { await send("send /start first"); return; }
+    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const days = [0,1,2,3,4,5,6].map((o) => dayNumber + o).filter((d) => d <= user.timelineDays);
+    const lines = days.map((d) => {
+      const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
+      const done = dayBlocks.filter((b) => b.completed).length;
+      return `${d === dayNumber ? "today" : `day ${d}`}: ${dayBlocks.length} blocks${done > 0 ? ` (${done} done)` : ""}`;
+    });
+    await send(`${user.goal}\n\n${lines.join("\n")}\n\n${user.timelineDays - dayNumber + 1} days left`);
+    return;
+  }
+
+  if (text === "/help") {
+    await send("/today — today's blocks\n/done <n> — mark block complete\n/streak — current streak\n/twin — what your twin is doing now\n/plan — this week's overview\n/reset — start over");
+    return;
+  }
+
+  if (text.startsWith("/")) return;
+
+  if (fs.existsSync(GENERATING_FLAG)) {
+    await send("still generating your plan, hang on...");
+    return;
+  }
+
+  if (fs.existsSync(WAITING_FLAG)) {
+    fs.unlinkSync(WAITING_FLAG);
+    runGeneration(text);
+    return;
+  }
+
+  // Normal twin reply
+  const user = await db.user.findUnique({
+    where: { id: 1 },
+    include: { twin: true, messages: { orderBy: { createdAt: "desc" }, take: 6 } },
+  });
+
+  if (!user?.twin) { await send("send /start to get set up first"); return; }
+
+  await db.message.create({ data: { userId: 1, direction: "user_to_twin", body: text } });
+
+  const conversation = user.messages
+    .reverse()
+    .map((m) => `${m.direction === "twin_to_user" ? user.twin!.name : "You"}: ${m.body}`)
+    .join("\n");
+
+  const prompt = fillTemplate(REPLY_PROMPT, {
+    twinName: user.twin.name,
+    personality: user.twin.personality,
+    speechStyle: user.twin.speechStyle,
+    conversation: conversation + `\nYou: ${text}`,
+  });
+
+  const reply = await generateReply(prompt);
+  await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: reply } });
+  await send(reply);
 }
 
 export async function POST() {
@@ -136,189 +258,7 @@ export async function POST() {
     for (const update of updates) {
       const msg = update.message;
       if (!msg?.text || String(msg.chat.id) !== CHAT_ID) continue;
-      const text = msg.text.trim();
-
-      // /start
-      if (text === "/start") {
-        const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: true } });
-        if (user?.twin) {
-          await send(`you're already set up — ${user.twin.name} is your twin. just text normally.\n\n/reset to start over.`);
-        } else {
-          fs.writeFileSync(WAITING_FLAG, "1");
-          await send(ONBOARDING_PROMPT);
-        }
-        processed++;
-        continue;
-      }
-
-      // /reset
-      if (text === "/reset") {
-        if (fs.existsSync(WAITING_FLAG)) fs.unlinkSync(WAITING_FLAG);
-        if (fs.existsSync(GENERATING_FLAG)) fs.unlinkSync(GENERATING_FLAG);
-        fs.writeFileSync(WAITING_FLAG, "1");
-        await send(ONBOARDING_PROMPT);
-        processed++;
-        continue;
-      }
-
-      // /today — list today's blocks
-      if (text === "/today") {
-        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
-        if (!user) { await send("send /start to get set up first"); processed++; continue; }
-        const startDate = startOfDay(new Date(user.createdAt));
-        const today = startOfDay(new Date());
-        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
-        const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
-        if (!blocks.length) { await send("no blocks scheduled for today"); processed++; continue; }
-        const lines = blocks.map((b, i) => `${i + 1}. [${b.completed ? "x" : " "}] ${b.startTime} — ${b.description} (${b.durationMin}m)`);
-        await send(`day ${dayNumber} of ${user.timelineDays}\n\n${lines.join("\n")}\n\nuse /done <n> to mark complete`);
-        processed++;
-        continue;
-      }
-
-      // /done <n> — mark block complete
-      if (text.startsWith("/done")) {
-        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
-        if (!user) { await send("send /start to get set up first"); processed++; continue; }
-        const startDate = startOfDay(new Date(user.createdAt));
-        const today = startOfDay(new Date());
-        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
-        const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
-        const n = parseInt(text.split(" ")[1]);
-        const block = blocks[n - 1];
-        if (!block) { await send("invalid block number. use /today to see today's list"); processed++; continue; }
-        await db.block.update({ where: { id: block.id }, data: { completed: true } });
-        // Count streak
-        let streak = 0;
-        for (let d = dayNumber; d >= 1; d--) {
-          const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
-          if (dayBlocks.some((b) => b.completed || b.id === block.id)) streak++;
-          else break;
-        }
-        await send(`marked done: ${block.description}\n\n🔥 ${streak} day streak`);
-        processed++;
-        continue;
-      }
-
-      // /streak
-      if (text === "/streak") {
-        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
-        if (!user) { await send("send /start to get set up first"); processed++; continue; }
-        const startDate = startOfDay(new Date(user.createdAt));
-        const today = startOfDay(new Date());
-        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
-        let streak = 0;
-        for (let d = dayNumber; d >= 1; d--) {
-          const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
-          if (dayBlocks.some((b) => b.completed)) streak++;
-          else break;
-        }
-        await send(`${streak} day streak — day ${dayNumber} of ${user.timelineDays}`);
-        processed++;
-        continue;
-      }
-
-      // /twin — what's the twin doing right now
-      if (text === "/twin") {
-        const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: { include: { blocks: true } } } });
-        if (!user?.twin) { await send("send /start to get set up first"); processed++; continue; }
-        const startDate = startOfDay(new Date(user.createdAt));
-        const today = startOfDay(new Date());
-        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
-        const now = new Date();
-        const nowMin = now.getHours() * 60 + now.getMinutes();
-        const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber);
-        const current = twinBlocks.find((b) => {
-          const [h, m] = b.startTime.split(":").map(Number);
-          const start = h * 60 + m;
-          return nowMin >= start && nowMin < start + b.durationMin;
-        });
-        if (current) {
-          await send(`${user.twin.name} is on: ${current.description}\n\n"${current.vibe}"`);
-        } else {
-          const next = twinBlocks.find((b) => {
-            const [h, m] = b.startTime.split(":").map(Number);
-            return h * 60 + m > nowMin;
-          });
-          await send(next ? `${user.twin.name}'s next block: ${next.startTime} — ${next.description}` : `${user.twin.name} is done for today`);
-        }
-        processed++;
-        continue;
-      }
-
-      // /plan — this week
-      if (text === "/plan") {
-        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
-        if (!user) { await send("send /start to get set up first"); processed++; continue; }
-        const startDate = startOfDay(new Date(user.createdAt));
-        const today = startOfDay(new Date());
-        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
-        const days = [0, 1, 2, 3, 4, 5, 6].map((offset) => dayNumber + offset).filter((d) => d <= user.timelineDays);
-        const lines = days.map((d) => {
-          const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
-          const done = dayBlocks.filter((b) => b.completed).length;
-          const label = d === dayNumber ? "today" : `day ${d}`;
-          return `${label}: ${dayBlocks.length} blocks${done > 0 ? ` (${done} done)` : ""}`;
-        });
-        await send(`${user.goal}\n\n${lines.join("\n")}\n\n${user.timelineDays - dayNumber + 1} days left`);
-        processed++;
-        continue;
-      }
-
-      // /help
-      if (text === "/help") {
-        await send("/today — today's blocks\n/done <n> — mark block complete\n/streak — current streak\n/twin — what your twin is doing\n/plan — this week's overview\n/reset — start over");
-        processed++;
-        continue;
-      }
-
-      // Skip other commands
-      if (text.startsWith("/")) continue;
-
-      // If generating, ignore
-      if (fs.existsSync(GENERATING_FLAG)) {
-        await send("still generating your plan, hang on...");
-        processed++;
-        continue;
-      }
-
-      // If waiting for onboarding reply
-      if (fs.existsSync(WAITING_FLAG)) {
-        fs.unlinkSync(WAITING_FLAG);
-        runGeneration(text); // fire and forget — don't await, let polling continue
-        processed++;
-        continue;
-      }
-
-      // Normal twin reply
-      const user = await db.user.findUnique({
-        where: { id: 1 },
-        include: { twin: true, messages: { orderBy: { createdAt: "desc" }, take: 6 } },
-      });
-
-      if (!user?.twin) {
-        await send("send /start to get set up first");
-        processed++;
-        continue;
-      }
-
-      await db.message.create({ data: { userId: 1, direction: "user_to_twin", body: text } });
-
-      const conversation = user.messages
-        .reverse()
-        .map((m) => `${m.direction === "twin_to_user" ? user.twin!.name : "You"}: ${m.body}`)
-        .join("\n");
-
-      const prompt = fillTemplate(REPLY_PROMPT, {
-        twinName: user.twin.name,
-        personality: user.twin.personality,
-        speechStyle: user.twin.speechStyle,
-        conversation: conversation + `\nYou: ${text}`,
-      });
-
-      const reply = await generateReply(prompt);
-      await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: reply } });
-      await send(reply);
+      await handleMessage(msg.text.trim());
       processed++;
     }
 
