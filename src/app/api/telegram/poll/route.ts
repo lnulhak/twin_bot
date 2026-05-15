@@ -130,7 +130,7 @@ async function handleOnboarding(text: string): Promise<boolean> {
         return true;
       }
       saveSession({ ...session, step: "twin", dailyHours: parsed.dailyHours, wakeTime: parsed.wakeTime, sleepTime: parsed.sleepTime, blockedTimes: parsed.blockedTimes });
-      await send(`got it — ${parsed.dailyHours}h/day, ${parsed.wakeTime}–${parsed.sleepTime}.\n\nalmost done:\n• where are you starting from? (current level, background)\n• twin name? (or pick: Mira, Kai, Zoe)\n• their vibe? (e.g. chill but focused, lowercase)`);
+      await send(`got it — ${parsed.dailyHours}h/day, ${parsed.wakeTime}–${parsed.sleepTime}.\n\nalmost done:\n• where are you starting from? (current level, background)\n• twin name?\n• their vibe? (e.g. chill but focused, lowercase)`);
       return true;
     }
 
