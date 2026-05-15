@@ -108,23 +108,25 @@ export async function POST(req: NextRequest) {
       })),
     });
 
-    // Schedule today's cron jobs via OpenClaw (best-effort — don't fail onboarding if this fails)
+    // Schedule today's remaining cron jobs via OpenClaw (best-effort)
     try {
-      const startDate = startOfDay(new Date());
+      const now = new Date();
+      const startDate = startOfDay(now);
       const todayBlocks = blocks.filter((b) => b.dayNumber === 1);
       for (const block of todayBlocks) {
         const [h, m] = block.startTime.split(":").map(Number);
         const blockDate = addDays(startDate, 0);
         blockDate.setHours(h, m, 0, 0);
+        // Skip blocks that have already started
+        if (blockDate <= now) continue;
         const isoTime = format(blockDate, "yyyy-MM-dd'T'HH:mm:ss");
-        // Find the persisted block id
         const persisted = await db.block.findFirst({
           where: { userId: 1, dayNumber: 1, startTime: block.startTime },
         });
         if (persisted) await scheduleNudge(persisted.id, isoTime, input.timezone);
       }
     } catch (schedErr) {
-      console.warn("Cron scheduling skipped (OpenClaw may not be running):", schedErr);
+      console.warn("Cron scheduling skipped:", schedErr);
     }
 
     return NextResponse.json({ ok: true });
