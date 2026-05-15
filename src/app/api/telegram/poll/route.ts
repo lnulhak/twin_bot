@@ -89,20 +89,32 @@ async function runGeneration(session: OnboardingSession) {
       },
     });
 
-    const totalWeeks = Math.ceil(input.timelineDays / 7);
     await send(`building your ${input.timelineDays}-day plan...`);
 
     const blocks = await generatePlan(input);
+    if (!blocks.length) throw new Error("plan generation returned 0 blocks — try /reset");
+
     await send(`plan ready. creating ${input.twinName}...`);
 
     const twinData = await generateTwin(input, blocks);
+
+    // Expand twin blocks across full timeline (repeat week 1 template)
+    const totalWeeks = Math.ceil(input.timelineDays / 7);
+    const expandedTwinBlocks = [];
+    for (let week = 0; week < totalWeeks; week++) {
+      for (const tb of twinData.twinBlocks) {
+        const dayNumber = tb.dayNumber + week * 7;
+        if (dayNumber > input.timelineDays) continue;
+        expandedTwinBlocks.push({ ...tb, dayNumber });
+      }
+    }
 
     await db.block.createMany({ data: blocks.map((b) => ({ userId: 1, ...b })) });
     const createdTwin = await db.twin.create({
       data: { userId: 1, name: input.twinName, personality: twinData.personality, speechStyle: twinData.speechStyle },
     });
     await db.twinBlock.createMany({
-      data: twinData.twinBlocks.map((tb) => ({ twinId: createdTwin.id, ...tb })),
+      data: expandedTwinBlocks.map((tb) => ({ twinId: createdTwin.id, ...tb })),
     });
 
     // Twin introduction
@@ -167,10 +179,17 @@ async function handleOnboarding(text: string): Promise<boolean> {
         runGeneration(s); // fire and forget
         return true;
       }
-      // User wants to fix something — treat as a free-form correction, re-parse all three
-      const goalParsed = await parseGoalStep(text).catch(() => null);
-      const scheduleParsed = await parseScheduleStep(text).catch(() => null);
-      const twinParsed = await parseTwinStep(text).catch(() => null);
+      // User wants to fix something — parse all three and apply whichever succeed
+      const [goalParsed, scheduleParsed, twinParsed] = await Promise.all([
+        parseGoalStep(text).catch(() => null),
+        parseScheduleStep(text).catch(() => null),
+        parseTwinStep(text).catch(() => null),
+      ]);
+      const anyFixed = goalParsed?.ok || scheduleParsed?.ok || twinParsed?.ok;
+      if (!anyFixed) {
+        await send(`couldn't figure out what to change. reply "yes" to confirm as-is, or try something like "change goal to lose 10kg" or "change timeline to 60 days"`);
+        return true;
+      }
       const updated = {
         ...session,
         ...(goalParsed?.ok ? { goal: goalParsed.goal, whyItMatters: goalParsed.whyItMatters, timelineDays: goalParsed.timelineDays } : {}),
@@ -226,8 +245,9 @@ async function handleMessage(text: string) {
     const dayNumber = getDayNumber(user.planStartDate);
     const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
     const n = parseInt(text.split(" ")[1]);
+    if (isNaN(n)) { await send("use /done followed by a number — e.g. /done 1\n\nuse /today to see today's blocks"); return; }
     const block = blocks[n - 1];
-    if (!block) { await send("invalid number. use /today to see the list"); return; }
+    if (!block) { await send(`no block #${n} today. use /today to see the list`); return; }
 
     // Can't mark done before the block has started
     const now = nowInSGT();
@@ -240,13 +260,19 @@ async function handleMessage(text: string) {
     }
 
     await db.block.update({ where: { id: block.id }, data: { completed: true } });
+
+    // Streak: all blocks on a day must be complete
+    const freshBlocks = await db.block.findMany({ where: { userId: 1 } });
     let streak = 0;
     for (let d = dayNumber; d >= 1; d--) {
-      const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
-      if (dayBlocks.some((b) => b.completed || b.id === block.id)) streak++;
+      const dayBlocks = freshBlocks.filter((b) => b.dayNumber === d);
+      if (dayBlocks.length > 0 && dayBlocks.every((b) => b.completed)) streak++;
       else break;
     }
-    await send(`done: ${block.description}\n\n🔥 ${streak} day streak`);
+    const remaining = freshBlocks.filter((b) => b.dayNumber === dayNumber && !b.completed).length;
+    const streakMsg = streak > 0 ? `\n\n🔥 ${streak} day streak` : "";
+    const remainingMsg = remaining > 0 ? `\n${remaining} block${remaining > 1 ? "s" : ""} left today` : "\nall blocks done today";
+    await send(`done: ${block.description}${remainingMsg}${streakMsg}`);
     return;
   }
 
@@ -257,7 +283,8 @@ async function handleMessage(text: string) {
     const dayNumber = getDayNumber(user.planStartDate);
     let streak = 0;
     for (let d = dayNumber; d >= 1; d--) {
-      if (user.blocks.filter((b) => b.dayNumber === d).some((b) => b.completed)) streak++;
+      const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
+      if (dayBlocks.length > 0 && dayBlocks.every((b) => b.completed)) streak++;
       else break;
     }
     await send(`${streak} day streak — day ${dayNumber} of ${user.timelineDays}`);
@@ -346,6 +373,13 @@ async function handleMessage(text: string) {
 
   if (!user?.twin) { await send("send /start to get set up first"); return; }
 
+  // Plan complete
+  const dayNum = getDayNumber(user.planStartDate);
+  if (dayNum > user.timelineDays) {
+    await send(`you finished your ${user.timelineDays}-day plan. ${user.twin.name} made it too.\n\nuse /reset to start a new one.`);
+    return;
+  }
+
   await db.message.create({ data: { userId: 1, direction: "user_to_twin", body: text } });
 
   const conversation = user.messages
@@ -378,6 +412,18 @@ async function checkNudges() {
 
   const now = nowInSGT();
   const dayNumber = getDayNumber(user.planStartDate);
+
+  // Plan complete — fire one-time completion message
+  if (dayNumber > user.timelineDays) {
+    const alreadySent = user.messages.some((m) => m.nudgeType === "complete");
+    if (!alreadySent) {
+      const msg = `${user.timelineDays} days. done.\n\n${user.twin.name} made it through every block. so did you.\n\nuse /reset to start a new goal.`;
+      await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, nudgeType: "complete" } });
+      await send(msg);
+    }
+    return;
+  }
+
   const todayBlocks = user.blocks.filter((b) => b.dayNumber === dayNumber);
 
   const recentMessages = [...user.messages].reverse()
@@ -421,13 +467,7 @@ async function checkNudges() {
 
     const twinBlock = user.twin.blocks.find(
       (tb) => tb.dayNumber === block.dayNumber && tb.type === block.type
-    ) ?? user.twin.blocks[0];
-
-    const sentTypes = new Set(
-      user.messages
-        .filter((msg) => msg.blockRef === block.id && msg.direction === "twin_to_user")
-        .map((msg) => msg.nudgeType)
-    );
+    ) ?? user.twin.blocks.find((tb) => tb.type === block.type) ?? user.twin.blocks[0];
 
     const base = {
       twinName: user.twin.name,
@@ -439,22 +479,30 @@ async function checkNudges() {
       recentMessages,
     };
 
-    // 1. Pre-nudge: 10 min before start (fire within a 60s window)
-    if (secsToStart >= 0 && secsToStart <= 60 && !sentTypes.has("pre")) {
+    // Race condition guard: check DB fresh before each nudge type
+    async function shouldSendNudge(nudgeType: string): Promise<boolean> {
+      const existing = await db.message.findFirst({
+        where: { blockRef: block.id, direction: "twin_to_user", nudgeType },
+      });
+      return !existing;
+    }
+
+    // 1. Pre-nudge: fires within 60s window starting at T-10min
+    if (secsToStart >= 0 && secsToStart <= 600 && secsToStart >= 540 && await shouldSendNudge("pre")) {
       const msg = await generateNudge(fillTemplate(NUDGE_PRE_PROMPT, base));
       await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, blockRef: block.id, nudgeType: "pre" } });
       await send(msg);
     }
 
     // 2. During-nudge: at block start (fire within a 60s window)
-    if (secsSinceStart >= 0 && secsSinceStart <= 60 && !sentTypes.has("during")) {
+    if (secsSinceStart >= 0 && secsSinceStart <= 60 && await shouldSendNudge("during")) {
       const msg = await generateNudge(fillTemplate(NUDGE_DURING_PROMPT, base));
       await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, blockRef: block.id, nudgeType: "during" } });
       await send(msg);
     }
 
     // 3. Post-nudge: at block end (fire within a 60s window)
-    if (secsSinceEnd >= 0 && secsSinceEnd <= 60 && !sentTypes.has("post")) {
+    if (secsSinceEnd >= 0 && secsSinceEnd <= 60 && await shouldSendNudge("post")) {
       const msg = await generateNudge(fillTemplate(NUDGE_POST_PROMPT, base));
       await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, blockRef: block.id, nudgeType: "post" } });
       await send(msg);
