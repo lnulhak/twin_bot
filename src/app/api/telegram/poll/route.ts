@@ -151,6 +151,17 @@ async function handleMessage(text: string) {
     const n = parseInt(text.split(" ")[1]);
     const block = blocks[n - 1];
     if (!block) { await send("invalid number. use /today to see the list"); return; }
+
+    // Can't mark done before the block has started
+    const now = nowInSGT();
+    const [bh, bm] = block.startTime.split(":").map(Number);
+    const blockStart = new Date(now);
+    blockStart.setHours(bh, bm, 0, 0);
+    if (now < blockStart) {
+      await send(`that block starts at ${block.startTime} — can't mark it done yet`);
+      return;
+    }
+
     await db.block.update({ where: { id: block.id }, data: { completed: true } });
     let streak = 0;
     for (let d = dayNumber; d >= 1; d--) {
