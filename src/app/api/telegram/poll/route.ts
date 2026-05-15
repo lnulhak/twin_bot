@@ -47,7 +47,19 @@ export async function POST() {
       const msg = update.message;
       if (!msg?.text || String(msg.chat.id) !== TELEGRAM_CHAT_ID) continue;
 
-      // Skip commands
+      // Handle /start
+      if (msg.text === "/start") {
+        const hasUser = await db.user.findUnique({ where: { id: 1 } });
+        const greeting = hasUser
+          ? `hey, ${user.twin?.name ?? "your twin"} is already set up. open the dashboard: http://localhost:3001`
+          : `hey. to get started, open the app and complete onboarding: http://localhost:3001`;
+        await execAsync(
+          `openclaw message send --channel telegram --target ${TELEGRAM_CHAT_ID} -m ${JSON.stringify(greeting)}`
+        );
+        continue;
+      }
+
+      // Skip other commands
       if (msg.text.startsWith("/")) continue;
 
       const body = msg.text;
