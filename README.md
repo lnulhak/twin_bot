@@ -94,48 +94,65 @@ All prompts are in `src/lib/prompts.ts` and documented in `docs/prompts.md`. The
 
 ### Prerequisites
 
-- Node.js 22+
-- A Telegram account
-- An OpenAI API key
+- **macOS** (the polling daemon uses launchd — see Limitations for non-macOS)
+- **Node.js 22+** — check with `node -v`
+- **A Telegram account**
+- **An OpenAI API key** — [get one here](https://platform.openai.com/api-keys)
 
-### Setup
+### Step 1 — Create your Telegram bot
+
+1. Open Telegram, search for **@BotFather**, send `/newbot`
+2. Pick a display name (e.g. "Echo Twin") and a username ending in `_bot`
+3. Copy the token BotFather gives you — looks like `1234567890:ABCdef...`
+
+### Step 2 — Get your Telegram user ID
+
+You'll need this so the bot knows who to message.
+
+1. Search Telegram for **@userinfobot** and send it any message
+2. It replies with your user ID (a number like `805422072`)
+
+### Step 3 — Configure environment
 
 ```bash
 git clone https://github.com/lnulhak/twin_bot.git
 cd twin_bot
-npm install
 cp .env.example .env.local
-# Edit .env.local — fill in OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-npx prisma migrate deploy
 ```
 
-### Getting your credentials
+Edit `.env.local` and fill in:
 
-**OpenAI API key:** https://platform.openai.com/api-keys
+```
+DATABASE_URL="file:./echo-twin.db"
+OPENAI_API_KEY="sk-..."              # your OpenAI key
+TELEGRAM_BOT_TOKEN="1234567890:..."  # from BotFather
+TELEGRAM_CHAT_ID="805422072"         # your Telegram user ID
+```
 
-**Telegram bot token:**
-1. Open Telegram, search @BotFather, send `/newbot`
-2. Follow prompts, copy the token (looks like `1234567890:ABC...`)
+### Step 4 — Run setup
 
-**Telegram chat ID:**
-1. Start the bot (send `/start`)
-2. The bot will show your chat ID in the pairing message
+```bash
+bash scripts/setup.sh
+```
 
-### Running
+This script:
+- Checks Node version
+- Installs npm dependencies
+- Runs database migrations
+- Registers slash commands with Telegram
+- Installs the polling LaunchAgent (macOS only)
+
+If `.env.local` is incomplete, the script will tell you what's missing and exit.
+
+### Step 5 — Start the app
 
 ```bash
 npm run dev
 ```
 
-Install the polling LaunchAgent (runs every 10 seconds, survives reboots):
+Send **`/start`** to your Telegram bot. Onboarding takes ~3 messages and ~30 seconds to generate.
 
-```bash
-launchctl load ~/Library/LaunchAgents/ai.echotwin.telegram-poll.plist
-```
-
-Send `/start` to your Telegram bot to begin onboarding.
-
-### Resetting
+### Resetting (start fresh)
 
 ```bash
 bash scripts/dev-reset.sh
@@ -143,27 +160,61 @@ bash scripts/dev-reset.sh
 
 ---
 
+## Limitations
+
+> These are known constraints of the current MVP. They are intentional trade-offs for a 6-hour proof of concept, not bugs.
+
+**macOS only (polling daemon)**
+The background polling loop uses macOS `launchd`. On Linux or Windows, the poller won't auto-start. You can simulate it manually:
+```bash
+# Linux/Windows: run this in a loop yourself
+while true; do curl -s -X POST http://localhost:3000/api/telegram/poll; sleep 10; done
+```
+
+**Laptop must be on**
+The app runs locally. If your Mac sleeps or loses internet, nudges won't fire and the bot won't respond. For always-on use, deploy to a server (Vercel + Turso, or a VPS).
+
+**Single user**
+The database stores one user (id=1). Multi-user support would require authentication and a hosted database — out of scope for this prototype.
+
+**Reply delay up to 10 seconds**
+Telegram messages are polled every 10 seconds, not event-driven. Replies arrive within 10 seconds of the user's message. For instant replies, a webhook + public URL (ngrok, Cloudflare Tunnel, or deployment) is needed.
+
+**OpenAI API costs**
+- Plan generation: ~$0.10–0.20 per onboarding (90-day plan, gpt-4o)
+- Nudges and replies: ~$0.001–0.002 each (gpt-4o-mini)
+- Typical daily cost for an active user: <$0.05
+
+**Twin memory resets daily**
+The twin doesn't remember what happened yesterday. Each nudge and reply is generated with only the last 6–10 messages as context. Persistent memory across days is a planned feature.
+
+**Timezone is hardcoded to SGT (Asia/Singapore)**
+All block timing and nudge firing uses Singapore time. Changing timezone requires updating `TIMEZONE` in `src/app/api/telegram/poll/route.ts`.
+
+---
+
 ## Usage
 
-**Onboard once:** Send `/start` to your bot. Answer 3 short messages. Review the confirmation. Reply "yes". Wait ~30 seconds.
+**Onboard once:** Send `/start` to your bot. Answer 3 short messages (goal → schedule → twin). Review the parsed summary. Reply "yes". Wait ~30 seconds for generation.
 
 **Daily flow:**
-- At your wake time: morning briefing from your twin
-- 10 min before each block: pre-nudge
-- At block start: during-nudge
-- At block end: post-nudge
-- Text the bot anytime to talk to your twin in character
+- At your wake time → morning briefing from your twin
+- 10 min before each block → pre-nudge ("about to start X")
+- At block start → during-nudge ("just started X")
+- At block end → post-nudge ("just finished, how'd it go")
+- Text the bot anytime → twin replies in character
 
 **Slash commands:**
 
 | Command | What it does |
 |---|---|
-| `/today` | Today's blocks with status |
-| `/done 2` | Mark block 2 complete (after it starts) |
-| `/streak` | Current streak (all blocks must be done) |
+| `/today` | Today's blocks with completion status |
+| `/tomorrow` | Tomorrow's blocks (preview) |
+| `/done 2` | Mark block 2 complete (only after it starts) |
+| `/streak` | Current streak — requires ALL blocks done |
 | `/twin` | What your twin is doing right now |
-| `/plan` | This week's overview |
-| `/reset` | Wipe and start over |
+| `/plan` | This week's overview with days left |
+| `/reset` | Wipe everything and start a new goal |
 | `/help` | All commands |
 
 ---
