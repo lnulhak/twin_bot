@@ -19,6 +19,7 @@ model User {
   timezone       String
   telegramChatId String?
   blockedTimes   String   @default("[]")
+  planStartDate  String   @default("")
   createdAt      DateTime @default(now())
 
   twin     Twin?

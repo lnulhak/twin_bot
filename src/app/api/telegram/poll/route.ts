@@ -3,13 +3,24 @@ import { db } from "@/lib/db";
 import { generatePlan, generateTwin, generateReply, generateNudge, parseOnboardingReply, validateOnboardingReply } from "@/lib/llm";
 import { fillTemplate, REPLY_PROMPT, NUDGE_PROMPT } from "@/lib/prompts";
 import { sendMessage } from "@/lib/telegram";
-import { startOfDay } from "date-fns";
 import fs from "node:fs";
 import path from "node:path";
 
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? "805422072";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const TIMEZONE = "Asia/Singapore";
+
+function getDayNumber(planStartDate: string): number {
+  if (!planStartDate) return 1;
+  const start = new Date(planStartDate + "T00:00:00+08:00");
+  const today = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Singapore" }));
+  today.setHours(0, 0, 0, 0);
+  return Math.max(1, Math.floor((today.getTime() - start.getTime()) / 86400000) + 1);
+}
+
+function nowInSGT() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Singapore" }));
+}
 
 const WAITING_FLAG = path.resolve(process.cwd(), ".onboarding-waiting");
 const GENERATING_FLAG = path.resolve(process.cwd(), ".onboarding-generating");
@@ -58,6 +69,11 @@ async function runGeneration(userReply: string) {
       await db.twin.delete({ where: { userId: 1 } });
     }
     await db.user.deleteMany({});
+    // Plan always starts tomorrow — no half-day issues
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const planStartDate = tomorrow.toISOString().slice(0, 10); // "YYYY-MM-DD"
+
     await db.user.create({
       data: {
         id: 1,
@@ -70,6 +86,7 @@ async function runGeneration(userReply: string) {
         blockedTimes: JSON.stringify(input.blockedTimes),
         currentLevel: input.currentLevel,
         timezone: input.timezone,
+        planStartDate,
       },
     });
 
@@ -84,7 +101,7 @@ async function runGeneration(userReply: string) {
       data: twinData.twinBlocks.map((tb) => ({ twinId: createdTwin.id, ...tb })),
     });
 
-    await send(`done. ${input.twinName} is ready.\n\nshe'll nudge you when your first block starts. text her anytime.\n\n/help for commands.`);
+    await send(`done. ${input.twinName} is ready.\n\nday 1 starts tomorrow morning — she'll nudge you when your first block begins. text her anytime before then.\n\n/help for commands.`);
   } catch (err) {
     console.error("Generation error:", err);
     await send("something went wrong. try /start again");
@@ -117,7 +134,7 @@ async function handleMessage(text: string) {
   if (text === "/today") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start to get set up first"); return; }
-    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const dayNumber = getDayNumber(user.planStartDate);
     const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
     if (!blocks.length) { await send("no blocks today"); return; }
     const lines = blocks.map((b, i) => `${i + 1}. [${b.completed ? "x" : " "}] ${b.startTime} — ${b.description} (${b.durationMin}m)`);
@@ -128,7 +145,7 @@ async function handleMessage(text: string) {
   if (text.startsWith("/done")) {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start first"); return; }
-    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const dayNumber = getDayNumber(user.planStartDate);
     const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
     const n = parseInt(text.split(" ")[1]);
     const block = blocks[n - 1];
@@ -147,7 +164,7 @@ async function handleMessage(text: string) {
   if (text === "/streak") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start first"); return; }
-    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const dayNumber = getDayNumber(user.planStartDate);
     let streak = 0;
     for (let d = dayNumber; d >= 1; d--) {
       if (user.blocks.filter((b) => b.dayNumber === d).some((b) => b.completed)) streak++;
@@ -160,7 +177,7 @@ async function handleMessage(text: string) {
   if (text === "/twin") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: { include: { blocks: true } } } });
     if (!user?.twin) { await send("send /start first"); return; }
-    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const dayNumber = getDayNumber(user.planStartDate);
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber);
     const current = twinBlocks.find((b) => {
@@ -180,7 +197,7 @@ async function handleMessage(text: string) {
   if (text === "/plan") {
     const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
     if (!user) { await send("send /start first"); return; }
-    const dayNumber = Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+    const dayNumber = getDayNumber(user.planStartDate);
     const days = [0,1,2,3,4,5,6].map((o) => dayNumber + o).filter((d) => d <= user.timelineDays);
     const lines = days.map((d) => {
       const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
@@ -247,13 +264,13 @@ async function checkNudges() {
   });
   if (!user?.twin) return;
 
-  const now = new Date();
-  const dayNumber = Math.floor((startOfDay(now).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+  const now = nowInSGT();
+  const dayNumber = getDayNumber(user.planStartDate);
   const todayBlocks = user.blocks.filter((b) => b.dayNumber === dayNumber);
 
   for (const block of todayBlocks) {
     const [h, m] = block.startTime.split(":").map(Number);
-    const blockDate = new Date(startOfDay(now));
+    const blockDate = new Date(now);
     blockDate.setHours(h, m, 0, 0);
     const secsSinceStart = (now.getTime() - blockDate.getTime()) / 1000;
 
@@ -266,7 +283,7 @@ async function checkNudges() {
       (tb) => tb.dayNumber === block.dayNumber && tb.type === block.type
     ) ?? user.twin.blocks[0];
 
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes(); // SGT
     const blockStartMinutes = h * 60 + m;
     const minutesIn = Math.max(0, nowMinutes - blockStartMinutes);
 
