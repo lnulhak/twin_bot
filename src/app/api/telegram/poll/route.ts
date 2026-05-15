@@ -5,6 +5,10 @@ import { fillTemplate, REPLY_PROMPT, NUDGE_PRE_PROMPT, NUDGE_DURING_PROMPT, NUDG
 import { sendMessage } from "@/lib/telegram";
 import { getSession, saveSession, clearSession } from "@/lib/onboardingSession";
 import type { OnboardingSession } from "@/lib/onboardingSession";
+import fs from "node:fs";
+import path from "node:path";
+
+const OFFSET_FILE = path.resolve(process.cwd(), ".telegram-offset");
 
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? "805422072";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
@@ -26,7 +30,14 @@ function nowInSGT() {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Singapore" }));
 }
 
-let lastOffset = 0;
+function loadOffset(): number {
+  try { return parseInt(fs.readFileSync(OFFSET_FILE, "utf-8")) || 0; } catch { return 0; }
+}
+function saveOffset(offset: number) {
+  fs.writeFileSync(OFFSET_FILE, String(offset));
+}
+
+let lastOffset = loadOffset();
 
 const send = (text: string) => sendMessage(text, CHAT_ID);
 
@@ -258,8 +269,20 @@ async function handleMessage(text: string) {
     if (!user?.twin) { await send("send /start first"); return; }
     if (!planHasStarted(user.planStartDate)) { await send(`${user.twin.name} starts tomorrow — get some rest`); return; }
     const dayNumber = getDayNumber(user.planStartDate);
-    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-    const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber);
+    const now = nowInSGT();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber)
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+    if (!twinBlocks.length) { await send(`no blocks for ${user.twin.name} today`); return; }
+
+    const firstBlock = twinBlocks[0];
+    const [fh, fm] = firstBlock.startTime.split(":").map(Number);
+    if (nowMin < fh * 60 + fm) {
+      await send(`${user.twin.name} hasn't started yet. first block at ${firstBlock.startTime} — ${firstBlock.description}`);
+      return;
+    }
+
     const current = twinBlocks.find((b) => {
       const [h, m] = b.startTime.split(":").map(Number);
       const start = h * 60 + m;
@@ -267,9 +290,18 @@ async function handleMessage(text: string) {
     });
     if (current) {
       await send(`${user.twin.name} is on: ${current.description}\n\n"${current.vibe}"`);
+      return;
+    }
+
+    const next = twinBlocks.find((b) => {
+      const [h, m] = b.startTime.split(":").map(Number);
+      return h * 60 + m > nowMin;
+    });
+    if (next) {
+      await send(`${user.twin.name} is on a break. next up at ${next.startTime} — ${next.description}`);
     } else {
-      const next = twinBlocks.find((b) => { const [h, m] = b.startTime.split(":").map(Number); return h * 60 + m > nowMin; });
-      await send(next ? `${user.twin.name}'s next: ${next.startTime} — ${next.description}` : `${user.twin.name} is done for today`);
+      const tomorrow = twinBlocks[0];
+      await send(`${user.twin.name} is done for today. back at ${tomorrow.startTime} tomorrow`);
     }
     return;
   }
@@ -445,6 +477,7 @@ export async function POST() {
 
     const updates = data.result;
     lastOffset = updates[updates.length - 1].update_id;
+    saveOffset(lastOffset);
 
     let processed = 0;
     for (const update of updates) {

@@ -49,3 +49,4 @@ next-env.d.ts
 .onboarding-session.json
 .onboarding-waiting
 .onboarding-generating
+.telegram-offset
