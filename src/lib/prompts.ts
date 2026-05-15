@@ -12,6 +12,7 @@ USER INPUT:
 - Timeline: {{timelineDays}} days
 - Daily hours available: {{dailyHours}}
 - Wake time: {{wakeTime}}, Sleep time: {{sleepTime}}
+- Blocked times (do NOT schedule anything during these): {{blockedTimes}}
 - Current level: {{currentLevel}}
 - Timezone: {{timezone}}
 
@@ -21,6 +22,7 @@ RULES:
 - Every day must have at least one "rest" block.
 - Every 7th day should be ~60% volume (recovery day).
 - Time format: "HH:mm" (24h), starting no earlier than {{wakeTime}}+30min and ending before {{sleepTime}}-60min.
+- CRITICAL: Never schedule a block that overlaps with any blocked time range listed above.
 - Block descriptions must be concrete and verb-led ("Solve 3 binary tree problems on LeetCode", not "study DSA").
 - Progression: weeks 1-2 build foundations, weeks 3-4 stretch, later weeks consolidate.`;
 

@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 
 interface Block {
   id: number;
@@ -29,13 +27,6 @@ interface DualTimelineProps {
   onBlockComplete: (id: number) => void;
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  deep_work: "bg-indigo-100 text-indigo-700",
-  review: "bg-blue-100 text-blue-700",
-  rest: "bg-green-100 text-green-700",
-  skill_practice: "bg-purple-100 text-purple-700",
-};
-
 const TYPE_ICONS: Record<string, string> = {
   deep_work: "⚡",
   review: "📖",
@@ -43,25 +34,24 @@ const TYPE_ICONS: Record<string, string> = {
   skill_practice: "🔧",
 };
 
+const TYPE_LABELS: Record<string, string> = {
+  deep_work: "deep work",
+  review: "review",
+  rest: "rest",
+  skill_practice: "practice",
+};
+
 function getCurrentTwinBlock(blocks: TwinBlock[]): TwinBlock | null {
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  return (
-    blocks.find((b) => {
-      const [h, m] = b.startTime.split(":").map(Number);
-      const start = h * 60 + m;
-      return currentMinutes >= start && currentMinutes < start + b.durationMin;
-    }) ?? null
-  );
+  return blocks.find((b) => {
+    const [h, m] = b.startTime.split(":").map(Number);
+    const start = h * 60 + m;
+    return currentMinutes >= start && currentMinutes < start + b.durationMin;
+  }) ?? null;
 }
 
-function BlockCard({
-  block,
-  onComplete,
-}: {
-  block: Block;
-  onComplete: (id: number) => void;
-}) {
+function BlockCard({ block, onComplete }: { block: Block; onComplete: (id: number) => void }) {
   const [completing, setCompleting] = useState(false);
 
   const handleComplete = async () => {
@@ -72,118 +62,87 @@ function BlockCard({
   };
 
   return (
-    <div
-      className={`flex gap-3 p-3 rounded-xl border transition-opacity ${
-        block.completed ? "opacity-50 bg-gray-50" : "bg-white"
-      }`}
-    >
-      <div className="text-center min-w-[48px]">
-        <p className="text-xs font-mono text-muted-foreground">{block.startTime}</p>
-        <p className="text-xs text-muted-foreground">{block.durationMin}m</p>
+    <div className={`flex gap-3 p-3 rounded-xl border transition-opacity ${
+      block.completed ? "opacity-40 border-zinc-800 bg-zinc-900" : "border-zinc-700 bg-zinc-800/50"
+    }`}>
+      <div className="text-center min-w-[44px] pt-0.5">
+        <p className="text-xs font-mono text-zinc-500">{block.startTime}</p>
+        <p className="text-xs text-zinc-600">{block.durationMin}m</p>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1">
-          <span className="text-sm">{TYPE_ICONS[block.type] ?? "📌"}</span>
-          <Badge
-            className={`text-xs px-1.5 py-0 ${TYPE_COLORS[block.type] ?? "bg-gray-100 text-gray-700"}`}
-          >
-            {block.type.replace("_", " ")}
-          </Badge>
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span className="text-xs">{TYPE_ICONS[block.type] ?? "📌"}</span>
+          <span className="text-xs text-zinc-500">{TYPE_LABELS[block.type] ?? block.type}</span>
         </div>
-        <p
-          className={`text-sm leading-snug ${
-            block.completed ? "line-through text-muted-foreground" : ""
-          }`}
-        >
+        <p className={`text-sm text-white leading-snug ${block.completed ? "line-through text-zinc-500" : ""}`}>
           {block.description}
         </p>
       </div>
       {!block.completed && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="text-xs h-7 shrink-0"
+        <button
           onClick={handleComplete}
           disabled={completing}
+          className="text-xs text-zinc-500 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg px-2 py-1 shrink-0 transition-colors disabled:opacity-30"
         >
           Done
-        </Button>
+        </button>
       )}
     </div>
   );
 }
 
-function TwinBlockCard({ block }: { block: TwinBlock; isCurrent?: boolean }) {
+function TwinBlockCard({ block, isCurrent }: { block: TwinBlock; isCurrent?: boolean }) {
   return (
-    <div className="flex gap-3 p-3 rounded-xl border bg-white">
-      <div className="text-center min-w-[48px]">
-        <p className="text-xs font-mono text-muted-foreground">{block.startTime}</p>
-        <p className="text-xs text-muted-foreground">{block.durationMin}m</p>
+    <div className={`flex gap-3 p-3 rounded-xl border ${
+      isCurrent ? "border-zinc-500 bg-zinc-800" : "border-zinc-700 bg-zinc-800/50"
+    }`}>
+      <div className="text-center min-w-[44px] pt-0.5">
+        <p className="text-xs font-mono text-zinc-500">{block.startTime}</p>
+        <p className="text-xs text-zinc-600">{block.durationMin}m</p>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1">
-          <span className="text-sm">{TYPE_ICONS[block.type] ?? "📌"}</span>
-          <Badge
-            className={`text-xs px-1.5 py-0 ${TYPE_COLORS[block.type] ?? "bg-gray-100 text-gray-700"}`}
-          >
-            {block.type.replace("_", " ")}
-          </Badge>
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span className="text-xs">{TYPE_ICONS[block.type] ?? "📌"}</span>
+          <span className="text-xs text-zinc-500">{TYPE_LABELS[block.type] ?? block.type}</span>
         </div>
-        <p className="text-sm leading-snug">{block.description}</p>
-        <p className="text-xs text-muted-foreground italic mt-1">{block.vibe}</p>
+        <p className="text-sm text-white leading-snug">{block.description}</p>
+        <p className="text-xs text-zinc-600 italic mt-1">{block.vibe}</p>
       </div>
     </div>
   );
 }
 
-export default function DualTimeline({
-  userBlocks,
-  twinBlocks,
-  twinName,
-  onBlockComplete,
-}: DualTimelineProps) {
+export default function DualTimeline({ userBlocks, twinBlocks, twinName, onBlockComplete }: DualTimelineProps) {
   const currentTwinBlock = getCurrentTwinBlock(twinBlocks);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      {/* User column */}
       <div>
-        <h2 className="font-semibold text-base mb-3 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
-          You
-        </h2>
+        <h2 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">You</h2>
         {userBlocks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No blocks scheduled for today.</p>
+          <p className="text-sm text-zinc-600">No blocks scheduled for today.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {userBlocks.map((b) => (
-              <BlockCard key={b.id} block={b} onComplete={onBlockComplete} />
-            ))}
+            {userBlocks.map((b) => <BlockCard key={b.id} block={b} onComplete={onBlockComplete} />)}
           </div>
         )}
       </div>
 
-      {/* Twin column */}
       <div>
-        <h2 className="font-semibold text-base mb-3 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-violet-500 inline-block" />
-          {twinName}
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">{twinName}</h2>
           {currentTwinBlock && (
-            <span className="text-xs font-normal bg-violet-100 text-violet-700 rounded-full px-2 py-0.5">
-              Now: {currentTwinBlock.description.slice(0, 30)}…
+            <span className="text-xs text-zinc-500 border border-zinc-700 rounded-full px-2 py-0.5">
+              now: {currentTwinBlock.description.slice(0, 28)}…
             </span>
           )}
-        </h2>
+        </div>
         {twinBlocks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No twin blocks for today.</p>
+          <p className="text-sm text-zinc-600">No twin blocks for today.</p>
         ) : (
           <div className="flex flex-col gap-2">
             {twinBlocks.map((b) => (
-              <TwinBlockCard
-                key={b.id}
-                block={b}
-                isCurrent={b.id === currentTwinBlock?.id}
-              />
+              <TwinBlockCard key={b.id} block={b} isCurrent={b.id === currentTwinBlock?.id} />
             ))}
           </div>
         )}

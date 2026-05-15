@@ -34,6 +34,10 @@ export const TwinSchema = z.object({
 });
 
 export async function generatePlan(input: OnboardingInput): Promise<PlanBlock[]> {
+  const blockedTimesStr = input.blockedTimes.length
+    ? input.blockedTimes.map((b) => `${b.label} (${b.startTime}–${b.endTime})`).join(", ")
+    : "none";
+
   const prompt = fillTemplate(PLAN_GENERATION_PROMPT, {
     goal: input.goal,
     whyItMatters: input.whyItMatters,
@@ -41,6 +45,7 @@ export async function generatePlan(input: OnboardingInput): Promise<PlanBlock[]>
     dailyHours: input.dailyHours,
     wakeTime: input.wakeTime,
     sleepTime: input.sleepTime,
+    blockedTimes: blockedTimesStr,
     currentLevel: input.currentLevel,
     timezone: input.timezone,
   });

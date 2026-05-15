@@ -79,35 +79,35 @@ export default function DashboardClient() {
     window.location.href = "/onboarding";
   };
 
-  if (error) return <div className="p-8 text-red-500">{error}</div>;
+  if (error) return <div className="p-8 text-red-400">{error}</div>;
   if (!data) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-500">
         Loading your plan…
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-violet-50">
+    <div className="min-h-screen bg-zinc-950">
       <div className="max-w-5xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex items-start justify-between mb-6 flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Echo Twin</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
+            <h1 className="text-2xl font-semibold text-white tracking-tight">Echo Twin</h1>
+            <p className="text-sm text-zinc-500 mt-0.5">
               Day {data.dayNumber} of {data.user.timelineDays} •{" "}
               {format(new Date(), "EEEE, MMM d")}
             </p>
-            <p className="text-sm text-muted-foreground truncate max-w-sm">
-              Goal: {data.user.goal}
+            <p className="text-sm text-zinc-500 truncate max-w-sm">
+              {data.user.goal}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <StreakBadge streak={data.streak} />
             <button
               onClick={() => setShowReset((v) => !v)}
-              className="text-muted-foreground hover:text-foreground p-1 rounded"
+              className="text-zinc-600 hover:text-white p-1 rounded transition-colors"
               title="Dev options"
             >
               ⚙
@@ -116,20 +116,16 @@ export default function DashboardClient() {
         </div>
 
         {showReset && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-            <span className="text-sm text-red-700">Dev: reset everything and restart onboarding.</span>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleReset}
-            >
+          <div className="mb-4 p-3 bg-zinc-900 border border-red-900 rounded-lg flex items-center gap-3">
+            <span className="text-sm text-red-400">Reset everything and restart onboarding.</span>
+            <Button variant="destructive" size="sm" onClick={handleReset}>
               Reset
             </Button>
           </div>
         )}
 
         {/* Dual timeline */}
-        <div className="bg-white rounded-2xl border p-5 mb-5 shadow-sm">
+        <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-5 mb-4">
           <DualTimeline
             userBlocks={data.todayBlocks}
             twinBlocks={data.todayTwinBlocks}
@@ -139,7 +135,7 @@ export default function DashboardClient() {
         </div>
 
         {/* Chat log */}
-        <div className="bg-white rounded-2xl border p-5 shadow-sm">
+        <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-5">
           <ChatLog
             messages={data.messages}
             twinName={data.twin?.name ?? "Twin"}

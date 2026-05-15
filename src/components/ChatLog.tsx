@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { formatDistanceToNow } from "date-fns";
 
 interface Message {
@@ -40,30 +38,25 @@ export default function ChatLog({ messages, twinName, onMessageSent }: ChatLogPr
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+      <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">
         Messages with {twinName}
       </h3>
 
-      <div className="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1">
+      <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
         {messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">
+          <p className="text-sm text-zinc-600 text-center py-8">
             No messages yet — your first nudge fires at your first scheduled block.
           </p>
         ) : (
           messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.direction === "twin_to_user" ? "justify-start" : "justify-end"}`}
-            >
-              <div
-                className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
-                  msg.direction === "twin_to_user"
-                    ? "bg-gray-100 text-gray-800"
-                    : "bg-indigo-500 text-white"
-                }`}
-              >
+            <div key={msg.id} className={`flex ${msg.direction === "twin_to_user" ? "justify-start" : "justify-end"}`}>
+              <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
+                msg.direction === "twin_to_user"
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
+                  : "bg-white text-zinc-950"
+              }`}>
                 <p>{msg.body}</p>
-                <p className={`text-xs mt-0.5 ${msg.direction === "twin_to_user" ? "text-gray-400" : "text-indigo-200"}`}>
+                <p className={`text-xs mt-0.5 ${msg.direction === "twin_to_user" ? "text-zinc-600" : "text-zinc-400"}`}>
                   {formatDistanceToNow(new Date(msg.createdAt), { addSuffix: true })}
                 </p>
               </div>
@@ -73,16 +66,21 @@ export default function ChatLog({ messages, twinName, onMessageSent }: ChatLogPr
       </div>
 
       <div className="flex gap-2 pt-1">
-        <Input
-          placeholder={`Reply to ${twinName}...`}
+        <input
+          className="flex-1 bg-zinc-800 border border-zinc-700 text-white placeholder:text-zinc-600 rounded-lg px-3 py-2 text-sm outline-none focus:border-zinc-500 transition-colors"
+          placeholder={`Reply to ${twinName}…`}
           value={reply}
           onChange={(e) => setReply(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleReply()}
           disabled={sending}
         />
-        <Button onClick={handleReply} disabled={sending || !reply.trim()} size="sm">
+        <button
+          onClick={handleReply}
+          disabled={sending || !reply.trim()}
+          className="text-sm px-3 py-2 rounded-lg bg-white text-zinc-950 hover:bg-zinc-200 disabled:opacity-30 transition-colors font-medium"
+        >
           Send
-        </Button>
+        </button>
       </div>
     </div>
   );

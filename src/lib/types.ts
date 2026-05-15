@@ -1,5 +1,11 @@
 export type BlockType = "deep_work" | "review" | "rest" | "skill_practice";
 
+export interface BlockedTime {
+  label: string;   // e.g. "Work", "School"
+  startTime: string; // "HH:mm"
+  endTime: string;   // "HH:mm"
+}
+
 export interface OnboardingInput {
   goal: string;
   whyItMatters: string;
@@ -7,6 +13,7 @@ export interface OnboardingInput {
   dailyHours: number;
   wakeTime: string;
   sleepTime: string;
+  blockedTimes: BlockedTime[];
   currentLevel: string;
   timezone: string;
   twinName: string;

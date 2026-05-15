@@ -4,6 +4,12 @@ import { db } from "@/lib/db";
 import { generatePlan, generateTwin } from "@/lib/llm";
 import type { OnboardingInput } from "@/lib/types";
 
+const BlockedTimeSchema = z.object({
+  label: z.string().min(1),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/),
+});
+
 const OnboardingSchema = z.object({
   goal: z.string().min(1),
   whyItMatters: z.string().min(1),
@@ -11,6 +17,7 @@ const OnboardingSchema = z.object({
   dailyHours: z.number().min(1).max(8),
   wakeTime: z.string().regex(/^\d{2}:\d{2}$/),
   sleepTime: z.string().regex(/^\d{2}:\d{2}$/),
+  blockedTimes: z.array(BlockedTimeSchema).default([]),
   currentLevel: z.string().min(1),
   timezone: z.string().min(1),
   twinName: z.string().min(1),
@@ -22,6 +29,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const input: OnboardingInput = OnboardingSchema.parse(body);
 
+    const blockedTimesJson = JSON.stringify(input.blockedTimes);
+
     // Upsert user (always id=1)
     await db.user.upsert({
       where: { id: 1 },
@@ -32,6 +41,7 @@ export async function POST(req: NextRequest) {
         dailyHours: input.dailyHours,
         wakeTime: input.wakeTime,
         sleepTime: input.sleepTime,
+        blockedTimes: blockedTimesJson,
         currentLevel: input.currentLevel,
         timezone: input.timezone,
       },
@@ -43,6 +53,7 @@ export async function POST(req: NextRequest) {
         dailyHours: input.dailyHours,
         wakeTime: input.wakeTime,
         sleepTime: input.sleepTime,
+        blockedTimes: blockedTimesJson,
         currentLevel: input.currentLevel,
         timezone: input.timezone,
       },
