@@ -133,6 +133,69 @@ export async function generateNudge(prompt: string): Promise<string> {
   return completion.choices[0].message.content ?? "";
 }
 
+// Step-by-step onboarding parsers
+
+const GoalStepSchema = z.object({
+  goal: z.string().min(5),
+  whyItMatters: z.string().min(5),
+  timelineDays: z.union([z.literal(30), z.literal(60), z.literal(90)]),
+  ok: z.boolean(),
+  missing: z.array(z.string()),
+});
+
+const ScheduleStepSchema = z.object({
+  dailyHours: z.number().min(1).max(8),
+  wakeTime: z.string().regex(/^\d{2}:\d{2}$/),
+  sleepTime: z.string().regex(/^\d{2}:\d{2}$/),
+  blockedTimes: z.array(z.object({ label: z.string(), startTime: z.string(), endTime: z.string() })),
+  ok: z.boolean(),
+  missing: z.array(z.string()),
+});
+
+const TwinStepSchema = z.object({
+  currentLevel: z.string().min(5),
+  twinName: z.string().min(1),
+  twinVibe: z.string().min(3),
+  ok: z.boolean(),
+  missing: z.array(z.string()),
+});
+
+export async function parseGoalStep(reply: string) {
+  const completion = await openai.chat.completions.parse({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: `Extract from the user's reply: goal (what they want to achieve), why it matters, and timeline (must be 30, 60, or 90 — pick closest). Set ok=true only if all 3 are clearly present. List what's missing.` },
+      { role: "user", content: reply },
+    ],
+    response_format: zodResponseFormat(GoalStepSchema, "goal_step"),
+  });
+  return completion.choices[0].message.parsed;
+}
+
+export async function parseScheduleStep(reply: string) {
+  const completion = await openai.chat.completions.parse({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: `Extract: dailyHours (1-8), wakeTime and sleepTime in HH:mm 24h format, blockedTimes array [{label, startTime HH:mm, endTime HH:mm}] (empty if none). Set ok=true if dailyHours and wake/sleep are present. Default wakeTime 07:00, sleepTime 23:00 if not specified.` },
+      { role: "user", content: reply },
+    ],
+    response_format: zodResponseFormat(ScheduleStepSchema, "schedule_step"),
+  });
+  return completion.choices[0].message.parsed;
+}
+
+export async function parseTwinStep(reply: string) {
+  const completion = await openai.chat.completions.parse({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: `Extract: currentLevel (their starting skill/fitness level), twinName (default to Mira if not given), twinVibe (their style, default "chill but focused" if not given). Set ok=true if currentLevel is present.` },
+      { role: "user", content: reply },
+    ],
+    response_format: zodResponseFormat(TwinStepSchema, "twin_step"),
+  });
+  return completion.choices[0].message.parsed;
+}
+
 const OnboardingValidationSchema = z.object({
   complete: z.boolean(),
   missing: z.array(z.string()),

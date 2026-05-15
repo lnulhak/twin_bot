@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { generatePlan, generateTwin, generateReply, generateNudge, parseOnboardingReply, validateOnboardingReply } from "@/lib/llm";
+import { generatePlan, generateTwin, generateReply, generateNudge, parseGoalStep, parseScheduleStep, parseTwinStep } from "@/lib/llm";
 import { fillTemplate, REPLY_PROMPT, NUDGE_PRE_PROMPT, NUDGE_DURING_PROMPT, NUDGE_POST_PROMPT, MORNING_BRIEFING_PROMPT } from "@/lib/prompts";
 import { sendMessage } from "@/lib/telegram";
-import fs from "node:fs";
-import path from "node:path";
+import { getSession, saveSession, clearSession } from "@/lib/onboardingSession";
+import type { OnboardingSession } from "@/lib/onboardingSession";
 
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? "805422072";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
@@ -22,45 +22,35 @@ function nowInSGT() {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Singapore" }));
 }
 
-const WAITING_FLAG = path.resolve(process.cwd(), ".onboarding-waiting");
-const GENERATING_FLAG = path.resolve(process.cwd(), ".onboarding-generating");
-
 let lastOffset = 0;
 
 const send = (text: string) => sendMessage(text, CHAT_ID);
 
-const ONBOARDING_PROMPT = `hey. answer these and i'll build your plan:
+function buildConfirmation(s: OnboardingSession): string {
+  const blocked = s.blockedTimes?.length
+    ? s.blockedTimes.map((b) => `${b.label} ${b.startTime}–${b.endTime}`).join(", ")
+    : "none";
+  return `here's what i got:\n\ngoal: ${s.goal}\nwhy: ${s.whyItMatters}\ntimeline: ${s.timelineDays} days\nhours/day: ${s.dailyHours}h, ${s.wakeTime}–${s.sleepTime}\nblocked: ${blocked}\nlevel: ${s.currentLevel}\ntwin: ${s.twinName} — ${s.twinVibe}\n\nreply "yes" to build your plan, or tell me what to fix.`;
+}
 
-1. goal?
-2. why does it matter?
-3. timeline — 30, 60, or 90 days?
-4. hours/day you can commit? (1–8)
-5. wake time / sleep time? (e.g. 07:30 / 23:00)
-6. blocked times? (e.g. work 09:00–17:00) or none
-7. where are you starting from? (current skill/fitness level)
-8. twin name? (or pick: Mira, Kai, Zoe)
-9. twin vibe? (e.g. "chill but focused, lowercase")
-
-just reply naturally — doesn't have to be numbered.`;
-
-async function runGeneration(userReply: string) {
-  // Validate before generating
-  const validation = await validateOnboardingReply(userReply);
-  if (!validation.complete) {
-    fs.writeFileSync(WAITING_FLAG, "1");
-    const missing = validation.missing.join(", ");
-    await send(`need a bit more — missing: ${missing}\n\ntry again with all the details.`);
-    return;
-  }
-
-  fs.writeFileSync(GENERATING_FLAG, "1");
+async function runGeneration(session: OnboardingSession) {
+  saveSession({ ...session, step: "generating" });
   try {
-    await send("parsing your answers and generating the plan...");
+    const input = {
+      goal: session.goal!,
+      whyItMatters: session.whyItMatters!,
+      timelineDays: session.timelineDays!,
+      dailyHours: session.dailyHours!,
+      wakeTime: session.wakeTime!,
+      sleepTime: session.sleepTime!,
+      blockedTimes: session.blockedTimes ?? [],
+      currentLevel: session.currentLevel!,
+      twinName: session.twinName!,
+      twinVibe: session.twinVibe!,
+      timezone: TIMEZONE,
+    };
 
-    const parsed = await parseOnboardingReply(userReply, TIMEZONE);
-    if (!parsed) throw new Error("Failed to parse");
-    const input = { ...parsed, timezone: TIMEZONE };
-
+    // Clear old data
     await db.block.deleteMany({});
     await db.message.deleteMany({});
     const twin = await db.twin.findUnique({ where: { userId: 1 } });
@@ -69,28 +59,27 @@ async function runGeneration(userReply: string) {
       await db.twin.delete({ where: { userId: 1 } });
     }
     await db.user.deleteMany({});
-    // Plan always starts tomorrow — no half-day issues
+
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const planStartDate = tomorrow.toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const planStartDate = tomorrow.toISOString().slice(0, 10);
 
     await db.user.create({
       data: {
-        id: 1,
-        goal: input.goal,
-        whyItMatters: input.whyItMatters,
-        timelineDays: input.timelineDays,
-        dailyHours: input.dailyHours,
-        wakeTime: input.wakeTime,
-        sleepTime: input.sleepTime,
+        id: 1, goal: input.goal, whyItMatters: input.whyItMatters,
+        timelineDays: input.timelineDays, dailyHours: input.dailyHours,
+        wakeTime: input.wakeTime, sleepTime: input.sleepTime,
         blockedTimes: JSON.stringify(input.blockedTimes),
-        currentLevel: input.currentLevel,
-        timezone: input.timezone,
-        planStartDate,
+        currentLevel: input.currentLevel, timezone: input.timezone, planStartDate,
       },
     });
 
+    const totalWeeks = Math.ceil(input.timelineDays / 7);
+    await send(`building your ${input.timelineDays}-day plan...`);
+
     const blocks = await generatePlan(input);
+    await send(`plan ready. creating ${input.twinName}...`);
+
     const twinData = await generateTwin(input, blocks);
 
     await db.block.createMany({ data: blocks.map((b) => ({ userId: 1, ...b })) });
@@ -101,14 +90,85 @@ async function runGeneration(userReply: string) {
       data: twinData.twinBlocks.map((tb) => ({ twinId: createdTwin.id, ...tb })),
     });
 
-    await send(`done. ${input.twinName} is ready.\n\nday 1 starts tomorrow morning — she'll nudge you when your first block begins. text her anytime before then.\n\n/help for commands.`);
+    // Twin introduction
+    const firstBlock = blocks.filter((b) => b.dayNumber === 1).sort((a, b) => a.startTime.localeCompare(b.startTime))[0];
+    const firstTime = firstBlock?.startTime ?? input.wakeTime;
+    await send(
+      `meet ${input.twinName}.\n\n${twinData.personality}\n\nshe texts like: "${twinData.speechStyle}"\n\nday 1 starts tomorrow at ${firstTime}. she'll nudge you before each block.\n\ntext her anytime — she'll reply in character. /help for commands.`
+    );
+
+    clearSession();
   } catch (err) {
     console.error("Generation error:", err);
     const msg = err instanceof Error ? err.message : "unknown error";
     await send(`generation failed: ${msg}\n\nuse /reset to try again.`);
-  } finally {
-    if (fs.existsSync(WAITING_FLAG)) fs.unlinkSync(WAITING_FLAG);
-    if (fs.existsSync(GENERATING_FLAG)) fs.unlinkSync(GENERATING_FLAG);
+    clearSession();
+  }
+}
+
+async function handleOnboarding(text: string): Promise<boolean> {
+  const session = getSession();
+  if (!session || session.step === "generating") return false;
+
+  switch (session.step) {
+    case "goal": {
+      const parsed = await parseGoalStep(text);
+      if (!parsed?.ok) {
+        const missing = parsed?.missing.join(", ") ?? "goal, reason, and timeline";
+        await send(`missing: ${missing}\n\ntry again — what's your goal, why does it matter, and how long? (30, 60, or 90 days)`);
+        return true;
+      }
+      saveSession({ ...session, step: "schedule", goal: parsed.goal, whyItMatters: parsed.whyItMatters, timelineDays: parsed.timelineDays });
+      await send(`got it — ${parsed.goal} in ${parsed.timelineDays} days.\n\nnow your schedule:\n• hours/day you can commit? (e.g. 2)\n• wake time / sleep time? (e.g. 07:30 / 23:00)\n• anything blocked out? (e.g. work 09:00–17:00, or none)`);
+      return true;
+    }
+
+    case "schedule": {
+      const parsed = await parseScheduleStep(text);
+      if (!parsed?.ok) {
+        await send(`need your daily hours and wake/sleep times — try again`);
+        return true;
+      }
+      saveSession({ ...session, step: "twin", dailyHours: parsed.dailyHours, wakeTime: parsed.wakeTime, sleepTime: parsed.sleepTime, blockedTimes: parsed.blockedTimes });
+      await send(`got it — ${parsed.dailyHours}h/day, ${parsed.wakeTime}–${parsed.sleepTime}.\n\nalmost done:\n• where are you starting from? (current level, background)\n• twin name? (or pick: Mira, Kai, Zoe)\n• their vibe? (e.g. chill but focused, lowercase)`);
+      return true;
+    }
+
+    case "twin": {
+      const parsed = await parseTwinStep(text);
+      if (!parsed?.ok) {
+        await send(`just need to know where you're starting from skill-wise — try again`);
+        return true;
+      }
+      const updated = { ...session, step: "confirm" as const, currentLevel: parsed.currentLevel, twinName: parsed.twinName, twinVibe: parsed.twinVibe };
+      saveSession(updated);
+      await send(buildConfirmation(updated));
+      return true;
+    }
+
+    case "confirm": {
+      if (text.toLowerCase().startsWith("yes")) {
+        const s = getSession()!;
+        runGeneration(s); // fire and forget
+        return true;
+      }
+      // User wants to fix something — treat as a free-form correction, re-parse all three
+      const goalParsed = await parseGoalStep(text).catch(() => null);
+      const scheduleParsed = await parseScheduleStep(text).catch(() => null);
+      const twinParsed = await parseTwinStep(text).catch(() => null);
+      const updated = {
+        ...session,
+        ...(goalParsed?.ok ? { goal: goalParsed.goal, whyItMatters: goalParsed.whyItMatters, timelineDays: goalParsed.timelineDays } : {}),
+        ...(scheduleParsed?.ok ? { dailyHours: scheduleParsed.dailyHours, wakeTime: scheduleParsed.wakeTime, sleepTime: scheduleParsed.sleepTime, blockedTimes: scheduleParsed.blockedTimes } : {}),
+        ...(twinParsed?.ok ? { currentLevel: twinParsed.currentLevel, twinName: twinParsed.twinName, twinVibe: twinParsed.twinVibe } : {}),
+      };
+      saveSession(updated);
+      await send(buildConfirmation(updated));
+      return true;
+    }
+
+    default:
+      return false;
   }
 }
 
@@ -118,17 +178,17 @@ async function handleMessage(text: string) {
     if (user?.twin) {
       await send(`you're already set up — ${user.twin.name} is your twin. just text normally.\n\n/reset to start over.`);
     } else {
-      fs.writeFileSync(WAITING_FLAG, "1");
-      await send(ONBOARDING_PROMPT);
+      clearSession();
+      saveSession({ step: "goal" });
+      await send(`hey. let's get you set up in 3 quick messages.\n\nwhat's your goal, why does it matter, and how long do you want to work on it?\n\nexample: "get fit for a marathon in 90 days because i want to run my first race"`);
     }
     return;
   }
 
   if (text === "/reset") {
-    if (fs.existsSync(WAITING_FLAG)) fs.unlinkSync(WAITING_FLAG);
-    if (fs.existsSync(GENERATING_FLAG)) fs.unlinkSync(GENERATING_FLAG);
-    fs.writeFileSync(WAITING_FLAG, "1");
-    await send(ONBOARDING_PROMPT);
+    clearSession();
+    saveSession({ step: "goal" });
+    await send(`starting over.\n\nwhat's your goal, why does it matter, and how long? (30, 60, or 90 days)`);
     return;
   }
 
@@ -227,14 +287,14 @@ async function handleMessage(text: string) {
 
   if (text.startsWith("/")) return;
 
-  if (fs.existsSync(GENERATING_FLAG)) {
-    await send("still generating your plan, hang on...");
+  // Handle onboarding steps
+  const session = getSession();
+  if (session && session.step !== "generating") {
+    await handleOnboarding(text);
     return;
   }
-
-  if (fs.existsSync(WAITING_FLAG)) {
-    fs.unlinkSync(WAITING_FLAG);
-    runGeneration(text);
+  if (session?.step === "generating") {
+    await send("still generating your plan, hang on...");
     return;
   }
 
