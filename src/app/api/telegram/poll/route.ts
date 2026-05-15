@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { generatePlan, generateTwin, generateReply, parseOnboardingReply } from "@/lib/llm";
+import { generatePlan, generateTwin, generateReply, parseOnboardingReply, validateOnboardingReply } from "@/lib/llm";
 import { fillTemplate, REPLY_PROMPT } from "@/lib/prompts";
 import { scheduleNudge } from "@/lib/openclaw";
 import { sendMessage } from "@/lib/telegram";
@@ -34,6 +34,15 @@ const ONBOARDING_PROMPT = `hey. answer these and i'll build your plan:
 just reply naturally — doesn't have to be numbered.`;
 
 async function runGeneration(userReply: string) {
+  // Validate before generating
+  const validation = await validateOnboardingReply(userReply);
+  if (!validation.complete) {
+    fs.writeFileSync(WAITING_FLAG, "1");
+    const missing = validation.missing.join(", ");
+    await send(`need a bit more — missing: ${missing}\n\ntry again with all the details.`);
+    return;
+  }
+
   fs.writeFileSync(GENERATING_FLAG, "1");
   try {
     await send("parsing your answers and generating the plan...");
