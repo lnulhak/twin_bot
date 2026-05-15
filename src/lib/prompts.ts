@@ -23,7 +23,8 @@ RULES:
 - Every 7th day should be ~60% volume (recovery day).
 - Time format: "HH:mm" (24h), starting no earlier than {{wakeTime}}+30min and ending before {{sleepTime}}-60min.
 - CRITICAL: Never schedule a block that overlaps with any blocked time range listed above.
-- Block descriptions must be concrete and verb-led ("Solve 3 binary tree problems on LeetCode", not "study DSA").
+- Block descriptions must be concrete and verb-led, MAX 8 words ("Solve 5 array problems on LeetCode").
+- Aim for 3 blocks per day max to stay within output limits.
 - Progression: weeks 1-2 build foundations, weeks 3-4 stretch, later weeks consolidate.`;
 
 export const TWIN_GENERATION_PROMPT = `You are creating a fictional "twin" character — a peer who is pursuing the SAME goal as the user, on roughly the same plan, slightly ahead. The twin is NOT a coach. They do not give advice. They simply share what they are doing, in first person, like a friend texting updates.
@@ -35,6 +36,7 @@ USER INPUT:
 
 RULES:
 - Generate a personality (2-3 sentences) and a speechStyle (concrete: lowercase? short sentences? specific phrases? emojis or not?).
+- Generate a twinBlocks array that mirrors ONLY the user's blocks provided (first 7 days). Keep vibe phrases under 6 words.
 - Generate a twinBlocks array that mirrors the user's blocks BUT:
   - Each twin block starts 10-15 minutes EARLIER than the user's
   - Twin block duration is the same (±5 min)

@@ -57,7 +57,7 @@ export async function generatePlan(input: OnboardingInput): Promise<PlanBlock[]>
       { role: "user", content: prompt },
     ],
     response_format: zodResponseFormat(PlanSchema, "plan"),
-    max_tokens: 8000,
+    max_tokens: 16000,
   });
 
   const result = completion.choices[0].message.parsed;
@@ -72,7 +72,7 @@ export async function generateTwin(
   const prompt = fillTemplate(TWIN_GENERATION_PROMPT, {
     twinName: input.twinName,
     twinVibe: input.twinVibe,
-    userPlan: JSON.stringify(userBlocks.slice(0, 50)),
+    userPlan: JSON.stringify(userBlocks.slice(0, 21)),
   });
 
   const completion = await openai.chat.completions.parse({
@@ -82,7 +82,7 @@ export async function generateTwin(
       { role: "user", content: prompt },
     ],
     response_format: zodResponseFormat(TwinSchema, "twin"),
-    max_tokens: 8000,
+    max_tokens: 4000,
   });
 
   const result = completion.choices[0].message.parsed;
