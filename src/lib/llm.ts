@@ -6,7 +6,7 @@ import type { OnboardingInput, PlanBlock } from "./types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-export const PlanSchema = z.object({
+const PlanSchema = z.object({
   blocks: z.array(
     z.object({
       dayNumber: z.number(),
@@ -18,7 +18,7 @@ export const PlanSchema = z.object({
   ),
 });
 
-export const TwinSchema = z.object({
+const TwinSchema = z.object({
   personality: z.string(),
   speechStyle: z.string(),
   twinBlocks: z.array(
