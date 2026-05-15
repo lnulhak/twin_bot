@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { generatePlan, generateTwin, generateReply, generateNudge, parseOnboardingReply, validateOnboardingReply } from "@/lib/llm";
-import { fillTemplate, REPLY_PROMPT, NUDGE_PROMPT } from "@/lib/prompts";
+import { fillTemplate, REPLY_PROMPT, NUDGE_PRE_PROMPT, NUDGE_DURING_PROMPT, NUDGE_POST_PROMPT, MORNING_BRIEFING_PROMPT } from "@/lib/prompts";
 import { sendMessage } from "@/lib/telegram";
 import fs from "node:fs";
 import path from "node:path";
@@ -260,7 +260,7 @@ async function checkNudges() {
     include: {
       twin: { include: { blocks: true } },
       blocks: true,
-      messages: { orderBy: { createdAt: "desc" }, take: 6 },
+      messages: { orderBy: { createdAt: "desc" }, take: 10 },
     },
   });
   if (!user?.twin) return;
@@ -269,47 +269,85 @@ async function checkNudges() {
   const dayNumber = getDayNumber(user.planStartDate);
   const todayBlocks = user.blocks.filter((b) => b.dayNumber === dayNumber);
 
+  const recentMessages = [...user.messages].reverse()
+    .map((msg) => `${msg.direction === "twin_to_user" ? user.twin!.name : "You"}: ${msg.body}`)
+    .join("\n") || "(no prior messages)";
+
+  // Morning briefing at wake time
+  const [wh, wm] = user.wakeTime.split(":").map(Number);
+  const wakeDate = new Date(now);
+  wakeDate.setHours(wh, wm, 0, 0);
+  const secsToWake = (now.getTime() - wakeDate.getTime()) / 1000;
+  const alreadyBriefed = user.messages.some(
+    (msg) => msg.nudgeType === "morning" && new Date(msg.createdAt).toDateString() === now.toDateString()
+  );
+
+  if (secsToWake >= 0 && secsToWake <= 60 && !alreadyBriefed && todayBlocks.length > 0) {
+    const blockSummary = todayBlocks
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .map((b) => `${b.startTime} — ${b.description} (${b.durationMin}m)`)
+      .join("\n");
+
+    const msg = await generateNudge(fillTemplate(MORNING_BRIEFING_PROMPT, {
+      twinName: user.twin.name,
+      personality: user.twin.personality,
+      speechStyle: user.twin.speechStyle,
+      todayBlocks: blockSummary,
+    }));
+    await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, nudgeType: "morning" } });
+    await send(msg);
+  }
+
   for (const block of todayBlocks) {
     const [h, m] = block.startTime.split(":").map(Number);
-    const blockDate = new Date(now);
-    blockDate.setHours(h, m, 0, 0);
-    const secsSinceStart = (now.getTime() - blockDate.getTime()) / 1000;
+    const blockStart = new Date(now);
+    blockStart.setHours(h, m, 0, 0);
+    const blockEnd = new Date(blockStart.getTime() + block.durationMin * 60 * 1000);
 
-    // Fire nudge if block started within the last 60 seconds and hasn't been nudged yet
-    if (secsSinceStart < 0 || secsSinceStart >= 60) continue;
-    const alreadyNudged = user.messages.some((msg) => msg.blockRef === block.id && msg.direction === "twin_to_user");
-    if (alreadyNudged) continue;
+    const secsToStart = (blockStart.getTime() - now.getTime()) / 1000;
+    const secsSinceStart = (now.getTime() - blockStart.getTime()) / 1000;
+    const secsSinceEnd = (now.getTime() - blockEnd.getTime()) / 1000;
 
     const twinBlock = user.twin.blocks.find(
       (tb) => tb.dayNumber === block.dayNumber && tb.type === block.type
     ) ?? user.twin.blocks[0];
 
-    const nowMinutes = now.getHours() * 60 + now.getMinutes(); // SGT
-    const blockStartMinutes = h * 60 + m;
-    const minutesIn = Math.max(0, nowMinutes - blockStartMinutes);
+    const sentTypes = new Set(
+      user.messages
+        .filter((msg) => msg.blockRef === block.id && msg.direction === "twin_to_user")
+        .map((msg) => msg.nudgeType)
+    );
 
-    const recentMessages = user.messages
-      .reverse()
-      .map((msg) => `${msg.direction === "twin_to_user" ? user.twin!.name : "You"}: ${msg.body}`)
-      .join("\n");
-
-    const prompt = fillTemplate(NUDGE_PROMPT, {
+    const base = {
       twinName: user.twin.name,
       personality: user.twin.personality,
       speechStyle: user.twin.speechStyle,
-      blockType: twinBlock.type,
-      blockDescription: twinBlock.description,
-      blockVibe: twinBlock.vibe,
-      blockStartTime: twinBlock.startTime,
-      minutesIn,
-      userBlockDescription: block.description,
-      minutesUntilUserBlock: Math.max(0, blockStartMinutes - nowMinutes + 10),
-      recentMessages: recentMessages || "(no prior messages)",
-    });
+      blockDescription: block.description,
+      durationMin: block.durationMin,
+      blockVibe: twinBlock?.vibe ?? "focused",
+      recentMessages,
+    };
 
-    const message = await generateNudge(prompt);
-    await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: message, blockRef: block.id } });
-    await send(message);
+    // 1. Pre-nudge: 10 min before start (fire within a 60s window)
+    if (secsToStart >= 0 && secsToStart <= 60 && !sentTypes.has("pre")) {
+      const msg = await generateNudge(fillTemplate(NUDGE_PRE_PROMPT, base));
+      await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, blockRef: block.id, nudgeType: "pre" } });
+      await send(msg);
+    }
+
+    // 2. During-nudge: at block start (fire within a 60s window)
+    if (secsSinceStart >= 0 && secsSinceStart <= 60 && !sentTypes.has("during")) {
+      const msg = await generateNudge(fillTemplate(NUDGE_DURING_PROMPT, base));
+      await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, blockRef: block.id, nudgeType: "during" } });
+      await send(msg);
+    }
+
+    // 3. Post-nudge: at block end (fire within a 60s window)
+    if (secsSinceEnd >= 0 && secsSinceEnd <= 60 && !sentTypes.has("post")) {
+      const msg = await generateNudge(fillTemplate(NUDGE_POST_PROMPT, base));
+      await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: msg, blockRef: block.id, nudgeType: "post" } });
+      await send(msg);
+    }
   }
 }
 

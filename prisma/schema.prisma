@@ -67,6 +67,7 @@ model Message {
   direction String
   body      String
   blockRef  Int?
+  nudgeType String?  // "pre" | "during" | "post" | null
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
 }
