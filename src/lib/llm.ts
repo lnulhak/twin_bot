@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
-import { fillTemplate, PLAN_GENERATION_PROMPT, TWIN_GENERATION_PROMPT } from "./prompts";
+import { fillTemplate, WEEK_TEMPLATE_PROMPT, TWIN_GENERATION_PROMPT } from "./prompts";
 import type { OnboardingInput, PlanBlock } from "./types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -33,45 +33,70 @@ const TwinSchema = z.object({
   ),
 });
 
-export async function generatePlan(input: OnboardingInput): Promise<PlanBlock[]> {
+function getDifficultyLabel(weekNumber: number, totalWeeks: number): string {
+  const pct = weekNumber / totalWeeks;
+  if (pct <= 0.3) return "foundation";
+  if (pct <= 0.6) return "build";
+  if (pct <= 0.85) return "peak";
+  return "recovery";
+}
+
+async function generateWeekTemplate(input: OnboardingInput, weekNumber: number, totalWeeks: number): Promise<PlanBlock[]> {
   const blockedTimesStr = input.blockedTimes.length
     ? input.blockedTimes.map((b) => `${b.label} (${b.startTime}–${b.endTime})`).join(", ")
     : "none";
 
-  const prompt = fillTemplate(PLAN_GENERATION_PROMPT, {
+  const prompt = fillTemplate(WEEK_TEMPLATE_PROMPT, {
     goal: input.goal,
     whyItMatters: input.whyItMatters,
-    timelineDays: input.timelineDays,
+    weekNumber,
+    totalWeeks,
+    difficultyLabel: getDifficultyLabel(weekNumber, totalWeeks),
     dailyHours: input.dailyHours,
     wakeTime: input.wakeTime,
     sleepTime: input.sleepTime,
     blockedTimes: blockedTimesStr,
     currentLevel: input.currentLevel,
-    timezone: input.timezone,
   });
 
   const completion = await openai.chat.completions.parse({
     model: "gpt-4o",
     messages: [
-      { role: "system", content: "You are an expert at decomposing big goals into daily executable plans." },
+      { role: "system", content: "You generate concrete 7-day training schedules." },
       { role: "user", content: prompt },
     ],
     response_format: zodResponseFormat(PlanSchema, "plan"),
-    max_tokens: 16000,
+    max_tokens: 4000,
   });
 
   const result = completion.choices[0].message.parsed;
-  if (!result) throw new Error("Plan generation returned null");
+  if (!result?.blocks.length) throw new Error("Week template generation failed");
+  return result.blocks;
+}
 
-  // Check we got blocks for all days — if truncated, fail clearly
-  const daysGenerated = new Set(result.blocks.map((b) => b.dayNumber)).size;
-  if (daysGenerated < input.timelineDays * 0.9) {
-    throw new Error(
-      `Plan truncated: got ${daysGenerated} days, expected ${input.timelineDays}. Try a shorter timeline or fewer daily hours.`
-    );
+export async function generatePlan(input: OnboardingInput): Promise<PlanBlock[]> {
+  const totalWeeks = Math.ceil(input.timelineDays / 7);
+  const allBlocks: PlanBlock[] = [];
+
+  // Generate a new week template every 3 weeks for progression variety
+  const weekTemplates: PlanBlock[][] = [];
+  for (let w = 1; w <= totalWeeks; w += 3) {
+    const template = await generateWeekTemplate(input, w, totalWeeks);
+    weekTemplates.push(template);
   }
 
-  return result.blocks;
+  // Expand templates to fill the full timeline
+  for (let week = 0; week < totalWeeks; week++) {
+    const templateIndex = Math.floor(week / 3);
+    const template = weekTemplates[Math.min(templateIndex, weekTemplates.length - 1)];
+    for (const block of template) {
+      const dayNumber = block.dayNumber + week * 7;
+      if (dayNumber > input.timelineDays) continue;
+      allBlocks.push({ ...block, dayNumber });
+    }
+  }
+
+  return allBlocks;
 }
 
 export async function generateTwin(

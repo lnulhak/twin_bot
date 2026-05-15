@@ -4,29 +4,27 @@ export function fillTemplate(template: string, vars: Record<string, string | num
   );
 }
 
-export const PLAN_GENERATION_PROMPT = `You are an expert at decomposing big goals into daily executable plans. The user has given you a goal, a timeline, and constraints. Generate a structured daily plan.
+export const WEEK_TEMPLATE_PROMPT = `You are building a weekly training schedule for someone working toward a goal. Generate exactly 7 days (Mon–Sun).
 
 USER INPUT:
 - Goal: {{goal}}
 - Why it matters: {{whyItMatters}}
-- Timeline: {{timelineDays}} days
+- Difficulty level: {{difficultyLabel}} (week {{weekNumber}} of {{totalWeeks}})
 - Daily hours available: {{dailyHours}}
 - Wake time: {{wakeTime}}, Sleep time: {{sleepTime}}
-- Blocked times (do NOT schedule anything during these): {{blockedTimes}}
+- Blocked times (never schedule during these): {{blockedTimes}}
 - Current level: {{currentLevel}}
-- Timezone: {{timezone}}
 
 RULES:
-- Generate blocks for ALL {{timelineDays}} days. Each day should sum to roughly {{dailyHours}} hours.
+- Generate exactly 7 days (dayNumber 1–7). Each day sums to roughly {{dailyHours}} hours.
 - Block types: "deep_work" | "review" | "rest" | "skill_practice"
 - Every day must have at least one "rest" block.
-- Every 7th day should be ~60% volume (recovery day).
-- Time format: "HH:mm" (24h), starting no earlier than {{wakeTime}}+30min and ending before {{sleepTime}}-60min.
-- CRITICAL: Never schedule a block that overlaps with any blocked time range listed above.
-- Block descriptions must be concrete and verb-led, MAX 6 words ("Solve 5 LeetCode array problems").
-- 3 blocks per day maximum. No more.
-- You MUST generate blocks for every single day from 1 to {{timelineDays}}. Do not stop early.
-- Progression: weeks 1-2 build foundations, weeks 3-4 stretch, later weeks consolidate.`;
+- Day 7 is recovery day — 60% volume, lighter blocks.
+- Time format: "HH:mm" (24h), no earlier than {{wakeTime}}+30min, ending before {{sleepTime}}-60min.
+- NEVER overlap with blocked times.
+- Block descriptions: concrete, verb-led, MAX 6 words ("Solve 5 LeetCode array problems").
+- Max 3 blocks per day.
+- difficulty "foundation" = comfortable pace. "build" = moderate push. "peak" = hardest. "recovery" = back off.`;
 
 export const TWIN_GENERATION_PROMPT = `You are creating a fictional "twin" character — a peer who is pursuing the SAME goal as the user, on roughly the same plan, slightly ahead. The twin is NOT a coach. They do not give advice. They simply share what they are doing, in first person, like a friend texting updates.
 
