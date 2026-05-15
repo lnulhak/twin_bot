@@ -28,7 +28,7 @@ Steps:
      -d "{\"blockId\": <N>}"
    ```
 3. The API returns `{ "message": "..." }`. Extract the message field.
-4. Send that message verbatim to the user via the Telegram channel. Do NOT add any preamble or commentary.
+4. Send that message to the user via Telegram using the message send tool with target `805422072`.
 
 ## 2. Inbound reply (user messages on Telegram)
 
@@ -42,7 +42,7 @@ When the user sends a message to the Telegram bot that does NOT contain `nudge b
      -d "{\"body\": \"<user message>\"}"
    ```
 3. The API returns `{ "reply": "..." }`. Extract the reply field.
-4. Send that reply verbatim to the user via the Telegram channel.
+4. Send that reply to the user via Telegram using the message send tool with target `805422072`.
 
 ## Rules
 

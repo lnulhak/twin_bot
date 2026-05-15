@@ -14,6 +14,7 @@ export async function scheduleNudge(
     `--at "${isoTime}"`,
     `--tz "${tz}"`,
     `--session isolated`,
+    `--thinking off`,
     `--message "nudge blockId=${blockId}"`,
     `--delete-after-run`,
   ].join(" ");
