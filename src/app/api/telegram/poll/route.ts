@@ -104,7 +104,8 @@ async function runGeneration(userReply: string) {
     await send(`done. ${input.twinName} is ready.\n\nday 1 starts tomorrow morning — she'll nudge you when your first block begins. text her anytime before then.\n\n/help for commands.`);
   } catch (err) {
     console.error("Generation error:", err);
-    await send("something went wrong. try /start again");
+    const msg = err instanceof Error ? err.message : "unknown error";
+    await send(`generation failed: ${msg}\n\nuse /reset to try again.`);
   } finally {
     if (fs.existsSync(WAITING_FLAG)) fs.unlinkSync(WAITING_FLAG);
     if (fs.existsSync(GENERATING_FLAG)) fs.unlinkSync(GENERATING_FLAG);

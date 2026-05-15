@@ -62,6 +62,15 @@ export async function generatePlan(input: OnboardingInput): Promise<PlanBlock[]>
 
   const result = completion.choices[0].message.parsed;
   if (!result) throw new Error("Plan generation returned null");
+
+  // Check we got blocks for all days — if truncated, fail clearly
+  const daysGenerated = new Set(result.blocks.map((b) => b.dayNumber)).size;
+  if (daysGenerated < input.timelineDays * 0.9) {
+    throw new Error(
+      `Plan truncated: got ${daysGenerated} days, expected ${input.timelineDays}. Try a shorter timeline or fewer daily hours.`
+    );
+  }
+
   return result.blocks;
 }
 
