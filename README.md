@@ -256,13 +256,15 @@ twin_bot/
 
 - **OpenClaw** took longer to debug than building the replacement. For a time-boxed build, integrating active-development third-party tooling is risky.
 - **Gender-neutral pronouns** need explicit prompting — GPT defaults to gendered language without instruction.
+- **Next.js was the wrong framework.** The spec started with a web UI, so we scaffolded Next.js. By the time we went Telegram-native, it was already built and working — ripping it out mid-build would have cost ~2 hours with zero user-facing benefit. But the honest assessment: this app doesn't need a web framework at all. A standalone Node.js script (~300 lines) that polls Telegram in a loop, calls OpenAI directly, and reads/writes SQLite would have been cleaner, faster to start, and had fewer dependencies. The right architecture was always `while (true) { pollTelegram(); checkNudges(); sleep(10s); }`. Starting from the spec's assumptions locked us into the wrong scaffold from the beginning.
 
 ### What's next
 
+- **Refactor to standalone Node.js** — ditch Next.js, single `index.ts` with a polling loop
+- **Deploy to a server** — Railway, Fly.io, or Render so the bot works when your laptop is closed, with webhooks instead of polling
 - Multi-user support (requires auth and a hosted DB)
-- Voice notes from the twin
 - Persistent twin memory across days
-- Deploy so the app works when your laptop is closed
+- Voice notes from the twin
 
 ---
 
