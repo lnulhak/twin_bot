@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { generatePlan, generateTwin, generateReply, parseOnboardingReply, validateOnboardingReply } from "@/lib/llm";
-import { fillTemplate, REPLY_PROMPT } from "@/lib/prompts";
-import { scheduleNudge } from "@/lib/openclaw";
+import { generatePlan, generateTwin, generateReply, generateNudge, parseOnboardingReply, validateOnboardingReply } from "@/lib/llm";
+import { fillTemplate, REPLY_PROMPT, NUDGE_PROMPT } from "@/lib/prompts";
 import { sendMessage } from "@/lib/telegram";
-import { format, startOfDay } from "date-fns";
+import { startOfDay } from "date-fns";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -85,20 +84,7 @@ async function runGeneration(userReply: string) {
       data: twinData.twinBlocks.map((tb) => ({ twinId: createdTwin.id, ...tb })),
     });
 
-    const now = new Date();
-    for (const block of blocks.filter((b) => b.dayNumber === 1)) {
-      const [h, m] = block.startTime.split(":").map(Number);
-      const blockDate = new Date(startOfDay(now));
-      blockDate.setHours(h, m, 0, 0);
-      if (blockDate <= now) continue;
-      const isoTime = format(blockDate, "yyyy-MM-dd'T'HH:mm:ss");
-      const persisted = await db.block.findFirst({ where: { userId: 1, dayNumber: 1, startTime: block.startTime } });
-      if (persisted) {
-        try { await scheduleNudge(persisted.id, isoTime, input.timezone); } catch { /* best effort */ }
-      }
-    }
-
-    await send(`done. ${input.twinName} is ready.\n\nshe'll nudge you at your first block. text her anytime.\n\n/help for commands.`);
+    await send(`done. ${input.twinName} is ready.\n\nshe'll nudge you when your first block starts. text her anytime.\n\n/help for commands.`);
   } catch (err) {
     console.error("Generation error:", err);
     await send("something went wrong. try /start again");
@@ -250,10 +236,72 @@ async function handleMessage(text: string) {
   await send(reply);
 }
 
+async function checkNudges() {
+  const user = await db.user.findUnique({
+    where: { id: 1 },
+    include: {
+      twin: { include: { blocks: true } },
+      blocks: true,
+      messages: { orderBy: { createdAt: "desc" }, take: 6 },
+    },
+  });
+  if (!user?.twin) return;
+
+  const now = new Date();
+  const dayNumber = Math.floor((startOfDay(now).getTime() - startOfDay(new Date(user.createdAt)).getTime()) / 86400000) + 1;
+  const todayBlocks = user.blocks.filter((b) => b.dayNumber === dayNumber);
+
+  for (const block of todayBlocks) {
+    const [h, m] = block.startTime.split(":").map(Number);
+    const blockDate = new Date(startOfDay(now));
+    blockDate.setHours(h, m, 0, 0);
+    const secsSinceStart = (now.getTime() - blockDate.getTime()) / 1000;
+
+    // Fire nudge if block started within the last 60 seconds and hasn't been nudged yet
+    if (secsSinceStart < 0 || secsSinceStart >= 60) continue;
+    const alreadyNudged = user.messages.some((msg) => msg.blockRef === block.id && msg.direction === "twin_to_user");
+    if (alreadyNudged) continue;
+
+    const twinBlock = user.twin.blocks.find(
+      (tb) => tb.dayNumber === block.dayNumber && tb.type === block.type
+    ) ?? user.twin.blocks[0];
+
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const blockStartMinutes = h * 60 + m;
+    const minutesIn = Math.max(0, nowMinutes - blockStartMinutes);
+
+    const recentMessages = user.messages
+      .reverse()
+      .map((msg) => `${msg.direction === "twin_to_user" ? user.twin!.name : "You"}: ${msg.body}`)
+      .join("\n");
+
+    const prompt = fillTemplate(NUDGE_PROMPT, {
+      twinName: user.twin.name,
+      personality: user.twin.personality,
+      speechStyle: user.twin.speechStyle,
+      blockType: twinBlock.type,
+      blockDescription: twinBlock.description,
+      blockVibe: twinBlock.vibe,
+      blockStartTime: twinBlock.startTime,
+      minutesIn,
+      userBlockDescription: block.description,
+      minutesUntilUserBlock: Math.max(0, blockStartMinutes - nowMinutes + 10),
+      recentMessages: recentMessages || "(no prior messages)",
+    });
+
+    const message = await generateNudge(prompt);
+    await db.message.create({ data: { userId: 1, direction: "twin_to_user", body: message, blockRef: block.id } });
+    await send(message);
+  }
+}
+
 export async function POST() {
   if (!BOT_TOKEN) return NextResponse.json({ error: "no token" }, { status: 500 });
 
   try {
+    // Check if any blocks need nudges
+    await checkNudges().catch((err) => console.error("Nudge check error:", err));
+
     const res = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastOffset + 1}&timeout=0&limit=10`
     );
