@@ -1,0 +1,15 @@
+{
+  "goal": "Get strong at data structures and algorithms",
+  "whyItMatters": "Job interviews in 3 months. Current Leetcode solve rate is ~20% on mediums.",
+  "timelineDays": 90,
+  "dailyHours": 2,
+  "wakeTime": "07:30",
+  "sleepTime": "23:00",
+  "blockedTimes": [
+    { "label": "Work", "startTime": "09:00", "endTime": "18:00" }
+  ],
+  "currentLevel": "Comfortable with arrays and hashmaps. Trees and graphs are weak. No DP experience.",
+  "timezone": "Asia/Singapore",
+  "twinName": "Luq",
+  "twinVibe": "chill but disciplined, lowercase texter, occasional dry humour"
+}
