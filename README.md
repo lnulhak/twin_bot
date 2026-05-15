@@ -149,6 +149,8 @@ If `.env.local` is incomplete, the script will tell you what's missing and exit.
 npm run dev
 ```
 
+> **Important:** `npm run dev` must be running at all times for the bot to work. The Telegram poller calls `localhost:3000` every 10 seconds — if the server isn't running, the bot silently stops responding. This is a local-first architecture; see Limitations for the deployed alternative.
+
 Send **`/start`** to your Telegram bot. Onboarding takes ~3 messages and ~30 seconds to generate.
 
 ### Resetting (start fresh)
