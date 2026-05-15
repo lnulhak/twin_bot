@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id             Int      @id @default(1)
+  goal           String
+  whyItMatters   String
+  timelineDays   Int
+  dailyHours     Float
+  wakeTime       String
+  sleepTime      String
+  currentLevel   String
+  timezone       String
+  telegramChatId String?
+  createdAt      DateTime @default(now())
+
+  twin     Twin?
+  blocks   Block[]
+  messages Message[]
+}
+
+model Twin {
+  id          Int    @id @default(autoincrement())
+  userId      Int    @unique
+  name        String
+  personality String
+  speechStyle String
+  user        User   @relation(fields: [userId], references: [id])
+  blocks      TwinBlock[]
+}
+
+model Block {
+  id          Int     @id @default(autoincrement())
+  userId      Int
+  dayNumber   Int
+  startTime   String
+  durationMin Int
+  type        String
+  description String
+  completed   Boolean @default(false)
+  user        User    @relation(fields: [userId], references: [id])
+}
+
+model TwinBlock {
+  id          Int    @id @default(autoincrement())
+  twinId      Int
+  dayNumber   Int
+  startTime   String
+  durationMin Int
+  type        String
+  description String
+  vibe        String
+  twin        Twin   @relation(fields: [twinId], references: [id])
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  direction String
+  body      String
+  blockRef  Int?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
