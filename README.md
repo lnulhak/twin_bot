@@ -32,9 +32,10 @@ What's missing: the feeling of a friend doing the same thing. People stick with 
 [90-second demo video](./assets/demo.mp4)
 
 **Screenshots:**
-- [Onboarding flow](./assets/screenshots/01-onboarding.png)
-- [Daily nudges on Telegram](./assets/screenshots/02-nudges.png)
-- [Slash commands](./assets/screenshots/03-commands.png)
+
+| Onboarding | Confirmation + Generation | Twin intro + Commands |
+|---|---|---|
+| ![Onboarding](./assets/screenshots/01-onboarding.jpg) | ![Confirmation](./assets/screenshots/02-confirmation-and-generation.jpg) | ![Twin intro](./assets/screenshots/03-twin-intro-and-commands.jpg) |
 
 ---
 
