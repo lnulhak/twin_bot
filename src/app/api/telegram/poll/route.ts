@@ -161,6 +161,118 @@ export async function POST() {
         continue;
       }
 
+      // /today — list today's blocks
+      if (text === "/today") {
+        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+        if (!user) { await send("send /start to get set up first"); processed++; continue; }
+        const startDate = startOfDay(new Date(user.createdAt));
+        const today = startOfDay(new Date());
+        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
+        const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
+        if (!blocks.length) { await send("no blocks scheduled for today"); processed++; continue; }
+        const lines = blocks.map((b, i) => `${i + 1}. [${b.completed ? "x" : " "}] ${b.startTime} — ${b.description} (${b.durationMin}m)`);
+        await send(`day ${dayNumber} of ${user.timelineDays}\n\n${lines.join("\n")}\n\nuse /done <n> to mark complete`);
+        processed++;
+        continue;
+      }
+
+      // /done <n> — mark block complete
+      if (text.startsWith("/done")) {
+        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+        if (!user) { await send("send /start to get set up first"); processed++; continue; }
+        const startDate = startOfDay(new Date(user.createdAt));
+        const today = startOfDay(new Date());
+        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
+        const blocks = user.blocks.filter((b) => b.dayNumber === dayNumber).sort((a, b) => a.startTime.localeCompare(b.startTime));
+        const n = parseInt(text.split(" ")[1]);
+        const block = blocks[n - 1];
+        if (!block) { await send("invalid block number. use /today to see today's list"); processed++; continue; }
+        await db.block.update({ where: { id: block.id }, data: { completed: true } });
+        // Count streak
+        let streak = 0;
+        for (let d = dayNumber; d >= 1; d--) {
+          const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
+          if (dayBlocks.some((b) => b.completed || b.id === block.id)) streak++;
+          else break;
+        }
+        await send(`marked done: ${block.description}\n\n🔥 ${streak} day streak`);
+        processed++;
+        continue;
+      }
+
+      // /streak
+      if (text === "/streak") {
+        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+        if (!user) { await send("send /start to get set up first"); processed++; continue; }
+        const startDate = startOfDay(new Date(user.createdAt));
+        const today = startOfDay(new Date());
+        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
+        let streak = 0;
+        for (let d = dayNumber; d >= 1; d--) {
+          const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
+          if (dayBlocks.some((b) => b.completed)) streak++;
+          else break;
+        }
+        await send(`${streak} day streak — day ${dayNumber} of ${user.timelineDays}`);
+        processed++;
+        continue;
+      }
+
+      // /twin — what's the twin doing right now
+      if (text === "/twin") {
+        const user = await db.user.findUnique({ where: { id: 1 }, include: { twin: { include: { blocks: true } } } });
+        if (!user?.twin) { await send("send /start to get set up first"); processed++; continue; }
+        const startDate = startOfDay(new Date(user.createdAt));
+        const today = startOfDay(new Date());
+        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
+        const now = new Date();
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+        const twinBlocks = user.twin.blocks.filter((b) => b.dayNumber === dayNumber);
+        const current = twinBlocks.find((b) => {
+          const [h, m] = b.startTime.split(":").map(Number);
+          const start = h * 60 + m;
+          return nowMin >= start && nowMin < start + b.durationMin;
+        });
+        if (current) {
+          await send(`${user.twin.name} is on: ${current.description}\n\n"${current.vibe}"`);
+        } else {
+          const next = twinBlocks.find((b) => {
+            const [h, m] = b.startTime.split(":").map(Number);
+            return h * 60 + m > nowMin;
+          });
+          await send(next ? `${user.twin.name}'s next block: ${next.startTime} — ${next.description}` : `${user.twin.name} is done for today`);
+        }
+        processed++;
+        continue;
+      }
+
+      // /plan — this week
+      if (text === "/plan") {
+        const user = await db.user.findUnique({ where: { id: 1 }, include: { blocks: true } });
+        if (!user) { await send("send /start to get set up first"); processed++; continue; }
+        const startDate = startOfDay(new Date(user.createdAt));
+        const today = startOfDay(new Date());
+        const dayNumber = Math.floor((today.getTime() - startDate.getTime()) / 86400000) + 1;
+        const days = [0, 1, 2, 3, 4, 5, 6].map((offset) => dayNumber + offset).filter((d) => d <= user.timelineDays);
+        const lines = days.map((d) => {
+          const dayBlocks = user.blocks.filter((b) => b.dayNumber === d);
+          const done = dayBlocks.filter((b) => b.completed).length;
+          const label = d === dayNumber ? "today" : `day ${d}`;
+          return `${label}: ${dayBlocks.length} blocks${done > 0 ? ` (${done} done)` : ""}`;
+        });
+        await send(`${user.goal}\n\n${lines.join("\n")}\n\n${user.timelineDays - dayNumber + 1} days left`);
+        processed++;
+        continue;
+      }
+
+      // /help
+      if (text === "/help") {
+        await send("/today — today's blocks\n/done <n> — mark block complete\n/streak — current streak\n/twin — what your twin is doing\n/plan — this week's overview\n/reset — start over");
+        processed++;
+        continue;
+      }
+
+      // Skip other commands
       if (text.startsWith("/")) continue;
 
       // If generating, ignore

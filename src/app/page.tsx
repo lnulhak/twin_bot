@@ -1,8 +1,8 @@
-import { redirect } from "next/navigation";
-import { db } from "@/lib/db";
-
-export default async function Home() {
-  const user = await db.user.findUnique({ where: { id: 1 } });
-  if (user) redirect("/dashboard");
-  redirect("/onboarding");
+export default function Home() {
+  return (
+    <div style={{ fontFamily: "monospace", padding: "2rem" }}>
+      <h1>Echo Twin API</h1>
+      <p>All interaction happens via Telegram. Open the bot to get started.</p>
+    </div>
+  );
 }
