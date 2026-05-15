@@ -29,8 +29,6 @@ What's missing: the feeling of a friend doing the same thing. People stick with 
 
 ## Demo
 
-[90-second demo video](./assets/demo.mp4)
-
 **Screenshots:**
 
 | Onboarding | Confirmation + Generation | Twin intro + Commands |
