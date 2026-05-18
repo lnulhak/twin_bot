@@ -1,4 +1,4 @@
-# Echo Twin
+# Twin Bot
 
 > A digital-twin accountability app. You set a goal; your "twin" — a fictional peer pursuing the same plan, slightly ahead — texts you on Telegram throughout the day about what they're working on, in first person. Parasocial accountability instead of nagging notifications.
 
